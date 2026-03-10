@@ -9,6 +9,7 @@
     "dev:api": "tsx backend/src/index.ts",
     "start:api": "node backend/dist/index.js",
     "build": "tsc -b && vite build",
+    "build:api": "tsc -p backend/tsconfig.json",
     "lint": "eslint .",
     "preview": "vite preview"
   },

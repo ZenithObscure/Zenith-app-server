@@ -563,7 +563,7 @@ app.patch('/api/devices/:id', requireAuth, (req: AuthRequest, res) => {
     }
 
     if (updates.length > 0) {
-      values.push(req.params.id)
+      values.push(req.params.id as string)
       db.prepare(`UPDATE devices SET ${updates.join(', ')} WHERE id = ?`).run(...values)
     }
   })
@@ -639,7 +639,7 @@ app.patch('/api/drive/:id', requireAuth, (req: AuthRequest, res) => {
   }
 
   if (updates.length > 0) {
-    values.push(req.params.id)
+    values.push(req.params.id as string)
     db.prepare(`UPDATE drive_nodes SET ${updates.join(', ')} WHERE id = ?`).run(...values)
   }
 
@@ -662,7 +662,7 @@ app.delete('/api/drive/:id', requireAuth, (req: AuthRequest, res) => {
     return [nodeId, ...children.flatMap((child) => collect(child.id))]
   }
 
-  const ids = collect(req.params.id)
+  const ids = collect(req.params.id as string)
   const delStmt = db.prepare('DELETE FROM drive_nodes WHERE id = ?')
   const tx = db.transaction(() => {
     ids.forEach((id) => delStmt.run(id))
