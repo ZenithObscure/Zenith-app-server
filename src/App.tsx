@@ -2,7 +2,7 @@ import './styles.css'
 import { ChangeEvent, FormEvent, ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type AuthMode = 'login' | 'signup'
-type ViewMode = 'auth' | 'launcher' | 'devices' | 'drive' | 'fidus' | 'photo-album' | 'hivemind'
+type ViewMode = 'auth' | 'launcher' | 'devices' | 'drive' | 'fidus' | 'photo-album' | 'hivemind' | 'storage'
 type StatusKind = 'error' | 'success'
 type DeviceStatus = 'Online' | 'Offline'
 type DeviceType = 'Laptop' | 'Stationary' | 'Phone' | 'Other'
@@ -115,7 +115,7 @@ const appTiles: AppTile[] = [
   {
     id: 'storage',
     name: 'Storage',
-    description: 'Placeholder app for upcoming advanced storage management workflows.',
+    description: 'View and manage storage contributed by each connected device in your network.',
     icon: (
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M3 4h18v5H3V4Zm0 7h18v9H3v-9Zm3 2v2h4v-2H6Zm0-7v1h12V6H6Z" />
@@ -822,10 +822,8 @@ function App() {
   }
 
   const handleDownloadDesktop = () => {
-    const downloadUrl = '/downloads/zenith-desktop'
-    window.open(downloadUrl, '_blank')
     setStatusKind('success')
-    setStatus('Desktop download opened. Replace URL with your final installer location later.')
+    setStatus('Desktop app is on the roadmap. Check back soon — it will appear here when ready.')
   }
 
   const handleCheckDesktopUpdates = () => {
@@ -1441,6 +1439,92 @@ function App() {
     )
   }
 
+  if (view === 'storage') {
+    const offlineDeviceCount = devices.length - onlineDeviceCount
+
+    return (
+      <main className="layout">
+        <section className="launcher-shell">
+          <div className="launcher-layout">
+            {renderSidebar()}
+
+            <section className="launcher-main">
+              <header className="launcher-header">
+                <div>
+                  <p className="kicker">Storage</p>
+                  <h1>Storage Pool</h1>
+                  <p className="lead">
+                    {totalStorageGb.toFixed(1)} GB pooled across {devices.length} device
+                    {devices.length !== 1 ? 's' : ''}.
+                  </p>
+                </div>
+                <button className="secondary-button" type="button" onClick={() => setView('launcher')}>
+                  Back to Launcher
+                </button>
+              </header>
+
+              <div className="allocation-summary">
+                <div className="summary-card">
+                  <p className="summary-label">Total Pooled</p>
+                  <p className="summary-value">{totalStorageGb.toFixed(1)} GB</p>
+                </div>
+                <div className="summary-card">
+                  <p className="summary-label">Online &amp; Accessible</p>
+                  <p className="summary-value">{onlineDeviceCount} device{onlineDeviceCount !== 1 ? 's' : ''}</p>
+                </div>
+                <div className="summary-card">
+                  <p className="summary-label">Offline / Unavailable</p>
+                  <p className="summary-value">{offlineDeviceCount} device{offlineDeviceCount !== 1 ? 's' : ''}</p>
+                </div>
+              </div>
+
+              <div className="storage-device-list" aria-label="Storage contributions by device">
+                {[...devices]
+                  .sort((a, b) => b.storageContributionGb - a.storageContributionGb)
+                  .map((device) => {
+                    const pct = totalStorageGb > 0
+                      ? (device.storageContributionGb / totalStorageGb) * 100
+                      : 0
+                    const isOffline = device.status === 'Offline'
+
+                    return (
+                      <div
+                        key={device.id}
+                        className={isOffline ? 'storage-device-row offline' : 'storage-device-row'}
+                      >
+                        <div className="storage-device-info">
+                          <div className="storage-device-name-row">
+                            <span className="storage-device-name">{device.name}</span>
+                            <span className="storage-device-type">{device.type}</span>
+                            <span className={isOffline ? 'device-badge' : 'device-badge online'}>
+                              {device.status}
+                            </span>
+                          </div>
+                          <div className="storage-bar-wrap">
+                            <div className="storage-bar-label">
+                              <span>{device.role}</span>
+                              <span>{pct.toFixed(1)}% of pool</span>
+                            </div>
+                            <div className="storage-bar-track">
+                              <div
+                                className={isOffline ? 'storage-bar-fill offline-fill' : 'storage-bar-fill'}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                        <span className="storage-gb-label">{device.storageContributionGb} GB</span>
+                      </div>
+                    )
+                  })}
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    )
+  }
+
   if (view === 'launcher') {
     return (
       <main className="layout">
@@ -1458,7 +1542,7 @@ function App() {
                 <div className="header-actions">
                   {isWebRuntime && (
                     <button className="secondary-button" type="button" onClick={handleDownloadDesktop}>
-                      Download Desktop App
+                      Get Desktop App
                     </button>
                   )}
                   {!isWebRuntime && (
@@ -1516,6 +1600,12 @@ function App() {
                         return
                       }
 
+                      if (app.id === 'storage') {
+                        setStatus('')
+                        setView('storage')
+                        return
+                      }
+
                       setStatusKind('success')
                       setStatus(`${app.name} is set up as a placeholder and ready for implementation.`)
                     }}
@@ -1540,7 +1630,7 @@ function App() {
   }
 
   return (
-    <main className="layout">
+    <main className="layout auth-layout">
       <section className="auth-shell">
         <aside className="auth-copy">
           <p className="kicker">Zenith-app.net</p>
