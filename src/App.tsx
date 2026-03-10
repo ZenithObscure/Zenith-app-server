@@ -2,7 +2,7 @@ import './styles.css'
 import { ChangeEvent, FormEvent, ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type AuthMode = 'login' | 'signup'
-type ViewMode = 'auth' | 'launcher' | 'devices' | 'drive' | 'fidus' | 'photo-album' | 'hivemind' | 'storage'
+type ViewMode = 'auth' | 'launcher' | 'devices' | 'drive' | 'fidus' | 'photo-album' | 'hivemind' | 'storage' | 'engine'
 type StatusKind = 'error' | 'success'
 type DeviceStatus = 'Online' | 'Offline'
 type DeviceType = 'Laptop' | 'Stationary' | 'Phone' | 'Other'
@@ -25,6 +25,7 @@ type DeviceInfo = {
   role: DeviceRole
   computeProfile: ComputeProfile
   storageContributionGb: number
+  appInstalled?: boolean
 }
 
 type DriveNode = {
@@ -33,6 +34,7 @@ type DriveNode = {
   kind: 'folder' | 'file'
   parentId: string | null
   isImage: boolean
+  deviceId?: string
 }
 
 type DispatchAssignment = {
@@ -105,7 +107,7 @@ const appTiles: AppTile[] = [
   {
     id: 'engine-layout',
     name: 'Engine Layout',
-    description: 'Reserved space for the engine system that will tie into Fidus later.',
+    description: 'Choose an AI model and configure resource limits that power Fidus and HiveMind tasks.',
     icon: (
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M10 2h4v3.1a7.7 7.7 0 0 1 3 1.3l2.2-2.2 2.8 2.8-2.2 2.2a7.7 7.7 0 0 1 1.3 3H24v4h-3.1a7.7 7.7 0 0 1-1.3 3l2.2 2.2-2.8 2.8-2.2-2.2a7.7 7.7 0 0 1-3 1.3V24h-4v-3.1a7.7 7.7 0 0 1-3-1.3l-2.2 2.2-2.8-2.8 2.2-2.2a7.7 7.7 0 0 1-1.3-3H0v-4h3.1a7.7 7.7 0 0 1 1.3-3L2.2 4.2 5 1.4l2.2 2.2a7.7 7.7 0 0 1 3-1.3V2Zm2 7.2a4.8 4.8 0 1 0 0 9.6 4.8 4.8 0 0 0 0-9.6Z" />
@@ -163,6 +165,7 @@ const starterDevices: DeviceInfo[] = [
     role: 'Main System',
     computeProfile: 'Heavy AI Node',
     storageContributionGb: 500,
+    appInstalled: true,
   },
   {
     id: 'laptop',
@@ -172,6 +175,7 @@ const starterDevices: DeviceInfo[] = [
     role: 'Worker',
     computeProfile: 'Balanced Worker',
     storageContributionGb: 160,
+    appInstalled: true,
   },
   {
     id: 'phone',
@@ -181,20 +185,21 @@ const starterDevices: DeviceInfo[] = [
     role: 'Worker',
     computeProfile: 'Light Assist',
     storageContributionGb: 32,
+    appInstalled: true,
   },
 ]
 
 const starterDriveNodes: DriveNode[] = [
-  { id: 'folder-conversations', name: 'Fidus Conversations', kind: 'folder', parentId: null, isImage: false },
-  { id: 'folder-photos', name: 'Photo Album', kind: 'folder', parentId: null, isImage: false },
-  { id: 'folder-shared', name: 'Shared Workspace', kind: 'folder', parentId: null, isImage: false },
+  { id: 'folder-conversations', name: 'Fidus Conversations', kind: 'folder', parentId: null, isImage: false, deviceId: 'computer-1' },
+  { id: 'folder-photos', name: 'Photo Album', kind: 'folder', parentId: null, isImage: false, deviceId: 'computer-1' },
+  { id: 'folder-shared', name: 'Shared Workspace', kind: 'folder', parentId: null, isImage: false, deviceId: 'computer-1' },
 ]
 
 const starterMessages: ChatMessage[] = [
   {
     id: 'm1',
     role: 'fidus',
-    text: 'Meow. I am Fidus. Ask me to plan features, draft copy, or organize tasks.',
+    text: 'Hello! I\'m Fidus 🐱 What can I help you with today?',
   },
 ]
 
@@ -238,6 +243,10 @@ function App() {
   const [hiveQuery, setHiveQuery] = useState('Generate a deployment plan and split subtasks for parallel processing.')
   const [hiveAssignments, setHiveAssignments] = useState<HiveAssignment[]>([])
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
+  const [selectedEngineModel, setSelectedEngineModel] = useState<string>('standard')
+  const [engineResourcePercent, setEngineResourcePercent] = useState(50)
+  const [hiveSettingsLocked, setHiveSettingsLocked] = useState(false)
+  const [driveFileMenuId, setDriveFileMenuId] = useState<string | null>(null)
 
   const isWebRuntime = useMemo(() => {
     const ua = typeof navigator !== 'undefined' ? navigator.userAgent.toLowerCase() : ''
@@ -295,7 +304,13 @@ function App() {
   )
 
   const applyApiState = (state: ApiState) => {
-    setDevices(state.devices)
+    setDevices((prev) => {
+      const prevMap = Object.fromEntries(prev.map((d) => [d.id, d]))
+      return state.devices.map((d) => ({
+        ...d,
+        appInstalled: d.appInstalled ?? prevMap[d.id]?.appInstalled ?? false,
+      }))
+    })
     setDriveNodes(state.driveNodes)
     setHiveContribution(state.hiveContribution)
     setTokenBalance(state.tokenBalance)
@@ -844,12 +859,17 @@ function App() {
       })
 
     return children.flatMap((node) => {
+      const nodeDevice = node.deviceId ? devices.find((d) => d.id === node.deviceId) ?? null : null
+      const menuOpen = driveFileMenuId === node.id
+      const storageDevices = devices.filter((d) => d.storageContributionGb > 0)
+
       const row = (
         <li key={node.id} className="tree-row" style={{ paddingLeft: `${depth * 16}px` }}>
           <span className="tree-kind">{node.kind === 'folder' ? 'Folder' : 'File'}</span>
           <span className="tree-name-wrap">
             {node.name}
             {node.isImage && <span className="album-tag">Photo Album</span>}
+            {nodeDevice && <em className="drive-device-label">on {nodeDevice.name}</em>}
           </span>
           <span className="tree-actions">
             {node.isImage && (
@@ -864,12 +884,64 @@ function App() {
                 Open
               </button>
             )}
-            <button className="mini-button" type="button" onClick={() => handleRenameNode(node)}>
-              Rename
-            </button>
-            <button className="mini-button danger" type="button" onClick={() => handleDeleteNode(node)}>
-              Delete
-            </button>
+            <div className="tree-menu-wrap">
+              <button
+                className="mini-button"
+                type="button"
+                aria-label="More options"
+                onClick={() => setDriveFileMenuId(menuOpen ? null : node.id)}
+              >
+                ⋯
+              </button>
+              {menuOpen && (
+                <div className="tree-menu-dropdown">
+                  <button
+                    className="tree-menu-item"
+                    type="button"
+                    onClick={() => {
+                      handleRenameNode(node)
+                      setDriveFileMenuId(null)
+                    }}
+                  >
+                    Rename
+                  </button>
+                  {storageDevices.length > 0 && (
+                    <>
+                      <div className="tree-menu-divider" />
+                      <p className="tree-menu-label">Set Location</p>
+                      {storageDevices.map((d) => (
+                        <button
+                          key={d.id}
+                          className={node.deviceId === d.id ? 'tree-menu-item active' : 'tree-menu-item'}
+                          type="button"
+                          onClick={() => {
+                            setDriveNodes((prev) =>
+                              prev.map((n) => (n.id === node.id ? { ...n, deviceId: d.id } : n)),
+                            )
+                            setDriveFileMenuId(null)
+                            setStatusKind('success')
+                            setStatus(`${node.name} location set to ${d.name}.`)
+                          }}
+                        >
+                          {d.name}{node.deviceId === d.id ? ' ✓' : ''}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                  <div className="tree-menu-divider" />
+                  <button
+                    className="tree-menu-item danger"
+                    type="button"
+                    onClick={() => {
+                      handleDeleteNode(node)
+                      setDriveFileMenuId(null)
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+            </div>
           </span>
         </li>
       )
@@ -884,10 +956,17 @@ function App() {
 
   const renderSidebar = () => (
     <aside className="account-sidebar" aria-label="Account and device information">
-      <p className="kicker">Account</p>
+      <div className="sidebar-toprow">
+        <p className="kicker">Account</p>
+        {view !== 'launcher' && view !== 'auth' && (
+          <button className="sidebar-back-btn" type="button" onClick={() => setView('launcher')}>
+            ← Launcher
+          </button>
+        )}
+      </div>
       <h2>{accountName}</h2>
       <p className="sidebar-email">{accountEmail}</p>
-      <p className="token-balance">Token Balance: {tokenBalance.toFixed(2)}</p>
+      <p className="token-balance">⬡ {tokenBalance.toFixed(2)} Tokens</p>
       <div className="hive-quick-toggle">
         <span>HiveMind</span>
         <button
@@ -901,26 +980,45 @@ function App() {
       </div>
 
       <div className="device-section">
-        <h3>Connected Devices</h3>
-        <p className="device-caption">Live hardware links for your Zenith account.</p>
+        <h3>Active Connections</h3>
+        <p className="device-caption">Devices signed in to your Zenith account.</p>
         <ul className="device-list">
           {devices.map((device) => (
             <li key={device.id} className="device-item">
               <div>
                 <span className="device-name">{device.name}</span>
                 <span className="device-subtext">{device.type}</span>
+                {device.appInstalled && device.status === 'Online' && (
+                  <span className="app-session-dot" title="Zenith app active on this device" />
+                )}
               </div>
-              <span className={device.status === 'Online' ? 'device-badge online' : 'device-badge'}>
-                {device.status}
-              </span>
+              <div className="device-indicators">
+                {device.storageContributionGb > 0 && device.status === 'Online' && (
+                  <span className="cloud-check" title="Cloud storage online &mdash; accessible from all devices">☁</span>
+                )}
+                <span className={device.status === 'Online' ? 'device-badge online' : 'device-badge'}>
+                  {device.status}
+                </span>
+              </div>
             </li>
           ))}
         </ul>
       </div>
 
-      <button className="logout-button" type="button" onClick={handleLogout}>
-        Logout
-      </button>
+      <div className="sidebar-bottom">
+        {isWebRuntime ? (
+          <button className="secondary-button sidebar-full-btn" type="button" onClick={handleDownloadDesktop}>
+            Get Desktop App
+          </button>
+        ) : (
+          <button className="secondary-button sidebar-full-btn" type="button" onClick={handleCheckDesktopUpdates}>
+            Check for Updates
+          </button>
+        )}
+        <button className="logout-button" type="button" onClick={handleLogout}>
+          Sign Out
+        </button>
+      </div>
     </aside>
   )
 
@@ -941,18 +1039,6 @@ function App() {
                     future AI tasks collaboratively.
                   </p>
                 </div>
-                <div className="header-actions">
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => setShowAddDeviceModal(true)}
-                  >
-                    Add Device
-                  </button>
-                  <button className="secondary-button" type="button" onClick={() => setView('launcher')}>
-                    Back to Launcher
-                  </button>
-                </div>
               </header>
 
               <section className="allocation-summary">
@@ -970,22 +1056,77 @@ function App() {
                 </article>
               </section>
 
-              <section className="devices-grid" aria-label="Configured devices and allocations">
-                {devices.map((device) => (
-                  <article key={device.id} className="device-card">
-                    <div className="device-card-head">
-                      <h3>{device.name}</h3>
-                      <span className={device.status === 'Online' ? 'device-badge online' : 'device-badge'}>
-                        {device.status}
+              <div className="devices-add-row">
+                <h3 className="devices-section-title">Main System</h3>
+                <button className="secondary-button" type="button" onClick={() => setShowAddDeviceModal(true)}>
+                  + Add Device
+                </button>
+              </div>
+
+              {mainSystemDevice ? (
+                <article className="device-card device-card-main">
+                  <div className="device-card-head">
+                    <h3>{mainSystemDevice.name}</h3>
+                    <div className="device-head-badges">
+                      {mainSystemDevice.appInstalled && (
+                        <span className="badge-app-installed">Zenith Installed</span>
+                      )}
+                      <span className={mainSystemDevice.status === 'Online' ? 'device-badge online' : 'device-badge'}>
+                        {mainSystemDevice.status}
                       </span>
                     </div>
-                    <p className="device-meta">{device.type}</p>
-                    <p className="device-meta">Role: {device.role}</p>
-                    <p className="device-meta">Compute: {device.computeProfile}</p>
-                    <p className="device-meta">Storage Contribution: {device.storageContributionGb} GB</p>
-                  </article>
-                ))}
-              </section>
+                  </div>
+                  <p className="device-meta">{mainSystemDevice.type} · Main System</p>
+                  <p className="device-meta">Compute: {mainSystemDevice.computeProfile}</p>
+                  <p className="device-meta">Storage Contribution: {mainSystemDevice.storageContributionGb} GB</p>
+                  {mainSystemDevice.storageContributionGb > 0 && mainSystemDevice.status === 'Online' && (
+                    <p className="device-meta cloud-ok">☁ ✓ Cloud storage online — files accessible from all devices</p>
+                  )}
+                </article>
+              ) : (
+                <p className="device-caption">No Main System device configured. Add one using the button above.</p>
+              )}
+
+              {(() => {
+                const workerDevices = devices.filter((d) => d.role === 'Worker')
+                return (
+                  <>
+                    <h3 className="devices-section-title" style={{ marginTop: '1.4rem' }}>Worker Devices</h3>
+                    <p className="device-caption">
+                      Workers must have the Zenith app installed to participate in HiveMind and task distribution.
+                    </p>
+                    {workerDevices.length === 0 ? (
+                      <p className="device-caption">No Worker devices added yet.</p>
+                    ) : (
+                      <section className="devices-grid" aria-label="Worker devices">
+                        {workerDevices.map((device) => (
+                          <article key={device.id} className="device-card">
+                            <div className="device-card-head">
+                              <h3>{device.name}</h3>
+                              <div className="device-head-badges">
+                                {device.appInstalled ? (
+                                  <span className="badge-app-installed">App ✓</span>
+                                ) : (
+                                  <span className="badge-app-missing">No App</span>
+                                )}
+                                <span className={device.status === 'Online' ? 'device-badge online' : 'device-badge'}>
+                                  {device.status}
+                                </span>
+                              </div>
+                            </div>
+                            <p className="device-meta">{device.type}</p>
+                            <p className="device-meta">Compute: {device.computeProfile}</p>
+                            <p className="device-meta">Storage: {device.storageContributionGb} GB</p>
+                            {device.storageContributionGb > 0 && device.status === 'Online' && (
+                              <p className="device-meta cloud-ok">☁ ✓ Cloud storage online</p>
+                            )}
+                          </article>
+                        ))}
+                      </section>
+                    )}
+                  </>
+                )
+              })()}
 
               <section className="dispatcher-panel" aria-label="Task dispatch simulator">
                 <h3>Task Dispatcher (Mock)</h3>
@@ -1141,9 +1282,6 @@ function App() {
                   >
                     Upload Placeholder
                   </button>
-                  <button className="secondary-button" type="button" onClick={() => setView('launcher')}>
-                    Back to Launcher
-                  </button>
                 </div>
               </header>
 
@@ -1209,6 +1347,52 @@ function App() {
                 )}
               </section>
 
+              {devices.filter((d) => d.storageContributionGb > 0).length > 1 && (
+                <section className="drive-offload-section" aria-label="Device storage offload">
+                  <h3>Offload Device Storage</h3>
+                  <p className="device-caption">
+                    Move all files from one storage device to another to free up its contribution.
+                  </p>
+                  {devices
+                    .filter((d) => d.storageContributionGb > 0)
+                    .map((sourceDevice) => {
+                      const fileCount = driveNodes.filter((n) => n.deviceId === sourceDevice.id).length
+                      const targets = devices.filter(
+                        (d) => d.id !== sourceDevice.id && d.storageContributionGb > 0,
+                      )
+                      if (targets.length === 0) return null
+                      return (
+                        <div key={sourceDevice.id} className="drive-offload-row">
+                          <span className="drive-offload-source">
+                            {sourceDevice.name} ({fileCount} item{fileCount !== 1 ? 's' : ''})
+                          </span>
+                          <span className="device-caption">→ Move all to:</span>
+                          {targets.map((target) => (
+                            <button
+                              key={target.id}
+                              className="mini-button"
+                              type="button"
+                              onClick={() => {
+                                setDriveNodes((prev) =>
+                                  prev.map((n) =>
+                                    n.deviceId === sourceDevice.id ? { ...n, deviceId: target.id } : n,
+                                  ),
+                                )
+                                setStatusKind('success')
+                                setStatus(
+                                  `All files from ${sourceDevice.name} moved to ${target.name}.`,
+                                )
+                              }}
+                            >
+                              {target.name}
+                            </button>
+                          ))}
+                        </div>
+                      )
+                    })}
+                </section>
+              )}
+
               {status && (
                 <p className={statusKind === 'success' ? 'status-message success' : 'status-message'}>
                   {status}
@@ -1232,15 +1416,8 @@ function App() {
               <header className="launcher-header">
                 <div>
                   <p className="kicker">Fidus the Cat</p>
-                  <h1>Companion Chat UI</h1>
-                  <p className="lead">
-                    Draft ideas, product decisions, and implementation steps with Fidus. Real AI backend
-                    can be connected later.
-                  </p>
+                  <h1>Fidus</h1>
                 </div>
-                <button className="secondary-button" type="button" onClick={() => setView('launcher')}>
-                  Back to Launcher
-                </button>
               </header>
 
               <section className="fidus-thread" aria-label="Fidus conversation">
@@ -1296,9 +1473,6 @@ function App() {
                   <button className="secondary-button" type="button" onClick={() => setView('drive')}>
                     Back to Drive
                   </button>
-                  <button className="secondary-button" type="button" onClick={() => setView('launcher')}>
-                    Back to Launcher
-                  </button>
                 </div>
               </header>
 
@@ -1345,90 +1519,150 @@ function App() {
               <header className="launcher-header">
                 <div>
                   <p className="kicker">HiveMind</p>
-                  <h1>Community Distributed AI</h1>
+                  <h1>Distributed AI Network</h1>
                   <p className="lead">
-                    Split incoming AI queries across connected users who share computational power.
-                    Contributors receive token rewards.
+                    Worker devices contribute compute to the HiveMind. Each device earns tokens per
+                    task completed. Configure contributions below and lock settings before enabling.
                   </p>
                 </div>
-                <button className="secondary-button" type="button" onClick={() => setView('launcher')}>
-                  Back to Launcher
-                </button>
               </header>
 
               <section className="dispatcher-panel" aria-label="HiveMind dispatcher">
-                <h3>Hive Query</h3>
-                <p className="device-caption">
-                  Configure per-device contribution below. HiveMind can only be enabled after at least one
-                  online device contributes resources.
-                </p>
-                <section className="hivemind-device-grid" aria-label="HiveMind resource overview">
-                  {devices.map((device) => (
-                    <article key={device.id} className="hivemind-device-card">
-                      <div className="device-card-head">
-                        <h3>{device.name}</h3>
-                        <span className={device.status === 'Online' ? 'device-badge online' : 'device-badge'}>
-                          {device.status}
-                        </span>
+                {(() => {
+                  const workerDevices = devices.filter(
+                    (d) => d.role === 'Worker' && d.appInstalled,
+                  )
+                  return (
+                    <>
+                      <h3>Worker Resource Contributions</h3>
+                      <p className="device-caption">
+                        Sliders are capped by your Engine resource limit ({engineResourcePercent}%).
+                        Lock settings before enabling HiveMind tasks.
+                      </p>
+
+                      {workerDevices.length === 0 ? (
+                        <p className="device-caption">
+                          No Worker devices with the Zenith app installed. Add a Worker device from
+                          the Devices app.
+                        </p>
+                      ) : (
+                        <section className="hivemind-device-grid" aria-label="HiveMind resource overview">
+                          {workerDevices.map((device) => (
+                            <article key={device.id} className="hivemind-device-card">
+                              <div className="device-card-head">
+                                <h3>{device.name}</h3>
+                                <span
+                                  className={
+                                    device.status === 'Online' ? 'device-badge online' : 'device-badge'
+                                  }
+                                >
+                                  {device.status}
+                                </span>
+                              </div>
+                              <p className="device-meta">
+                                {device.type} · {device.computeProfile}
+                              </p>
+                              <label htmlFor={`hive-${device.id}`}>
+                                Contribution:{' '}
+                                {Math.min(hiveContribution[device.id] ?? 0, engineResourcePercent)}%
+                                {engineResourcePercent < 100 && (
+                                  <span className="device-caption"> (cap: {engineResourcePercent}%)</span>
+                                )}
+                              </label>
+                              <input
+                                id={`hive-${device.id}`}
+                                type="range"
+                                min={0}
+                                max={engineResourcePercent}
+                                step={5}
+                                value={Math.min(
+                                  hiveContribution[device.id] ?? 0,
+                                  engineResourcePercent,
+                                )}
+                                disabled={device.status !== 'Online' || hiveSettingsLocked}
+                                onChange={(event) =>
+                                  handleHiveContributionChange(
+                                    device.id,
+                                    Number(event.target.value),
+                                  )
+                                }
+                                style={{ accentColor: 'var(--accent)' }}
+                              />
+                            </article>
+                          ))}
+                        </section>
+                      )}
+
+                      <p className="device-caption">
+                        Total configured contribution: {hiveTotalContribution}%
+                      </p>
+
+                      <div className="hivemind-lock-row">
+                        <button
+                          className={hiveSettingsLocked ? 'primary-button' : 'secondary-button'}
+                          type="button"
+                          onClick={() => {
+                            const locking = !hiveSettingsLocked
+                            setHiveSettingsLocked(locking)
+                            setStatusKind('success')
+                            setStatus(
+                              locking
+                                ? 'HiveMind settings locked. These contributions will be used for task distribution.'
+                                : 'HiveMind settings unlocked. Adjust contributions freely.',
+                            )
+                          }}
+                        >
+                          {hiveSettingsLocked
+                            ? '🔒 Settings Locked — Click to Unlock'
+                            : 'Lock In Settings'}
+                        </button>
                       </div>
-                      <p className="device-meta">{device.type}</p>
-                      <label htmlFor={`hive-${device.id}`}>Contribution: {hiveContribution[device.id] ?? 0}%</label>
+
+                      <label htmlFor="hive-query" style={{ marginTop: '1rem', display: 'block' }}>
+                        Offload Query to HiveMind
+                      </label>
+                      <p className="device-caption">
+                        Offloading spends tokens based on task complexity. Workers earn tokens for
+                        completed tasks.
+                      </p>
                       <input
-                        id={`hive-${device.id}`}
-                        type="range"
-                        min={0}
-                        max={100}
-                        step={5}
-                        value={hiveContribution[device.id] ?? 0}
-                        disabled={device.status !== 'Online'}
-                        onChange={(event) =>
-                          handleHiveContributionChange(device.id, Number(event.target.value))
-                        }
+                        id="hive-query"
+                        name="hive-query"
+                        type="text"
+                        value={hiveQuery}
+                        onChange={(event) => setHiveQuery(event.target.value)}
                       />
-                    </article>
-                  ))}
-                </section>
-                <p className="device-caption">Total configured contribution: {hiveTotalContribution}%</p>
-                <label htmlFor="hive-query">Query Input</label>
-                <input
-                  id="hive-query"
-                  name="hive-query"
-                  type="text"
-                  value={hiveQuery}
-                  onChange={(event) => setHiveQuery(event.target.value)}
-                />
-                <button className="secondary-button" type="button" onClick={handleRunHiveMind}>
-                  Run HiveMind Distribution
-                </button>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={handleRunHiveMind}
+                      >
+                        Offload to HiveMind
+                      </button>
 
-                <ul className="dispatch-list">
-                  {devices.map((device) => (
-                    <li key={device.id} className="dispatch-item">
-                      <span>{device.name}</span>
-                      <span>{device.status}</span>
-                      <span>{hiveContribution[device.id] ?? 0}% shared</span>
-                    </li>
-                  ))}
-                </ul>
-
-                {hiveAssignments.length > 0 && (
-                  <>
-                    <h3>Assignment Result</h3>
-                    <ul className="dispatch-list">
-                      {hiveAssignments.map((assignment) => (
-                        <li key={assignment.deviceId} className="dispatch-item">
-                          <span>{assignment.deviceName}</span>
-                          <span>{assignment.sharePercent}% workload</span>
-                          <span>+{assignment.tokenReward.toFixed(2)} tokens</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
+                      {hiveAssignments.length > 0 && (
+                        <>
+                          <h3>Assignment Result</h3>
+                          <ul className="dispatch-list">
+                            {hiveAssignments.map((assignment) => (
+                              <li key={assignment.deviceId} className="dispatch-item">
+                                <span>{assignment.deviceName}</span>
+                                <span>{assignment.sharePercent}% workload</span>
+                                <span>+{assignment.tokenReward.toFixed(2)} tokens</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </>
+                  )
+                })()}
               </section>
 
               {status && (
-                <p className={statusKind === 'success' ? 'status-message success' : 'status-message'}>
+                <p
+                  className={statusKind === 'success' ? 'status-message success' : 'status-message'}
+                >
                   {status}
                 </p>
               )}
@@ -1458,9 +1692,6 @@ function App() {
                     {devices.length !== 1 ? 's' : ''}.
                   </p>
                 </div>
-                <button className="secondary-button" type="button" onClick={() => setView('launcher')}>
-                  Back to Launcher
-                </button>
               </header>
 
               <div className="allocation-summary">
@@ -1525,6 +1756,131 @@ function App() {
     )
   }
 
+  if (view === 'engine') {
+    const engineModels = [
+      {
+        id: 'compact',
+        name: 'Compact',
+        description: 'Lightweight responses. Ideal for quick answers, summaries, and simple tasks.',
+        vram: '4 GB VRAM',
+        cpu: '2–4 Cores',
+        load: 'Low',
+      },
+      {
+        id: 'standard',
+        name: 'Standard',
+        description: 'Balanced performance for general-purpose AI, multi-step reasoning, and drafting.',
+        vram: '8 GB VRAM',
+        cpu: '4–8 Cores',
+        load: 'Medium',
+      },
+      {
+        id: 'power',
+        name: 'Power',
+        description: 'Full capacity for complex AI workflows, code generation, and heavy analysis.',
+        vram: '16+ GB VRAM',
+        cpu: '8+ Cores',
+        load: 'High',
+      },
+    ]
+    const selectedModel = engineModels.find((m) => m.id === selectedEngineModel) ?? engineModels[1]!
+
+    return (
+      <main className="layout">
+        <section className="launcher-shell">
+          <div className="launcher-layout">
+            {renderSidebar()}
+
+            <section className="launcher-main">
+              <header className="launcher-header">
+                <div>
+                  <p className="kicker">Engine</p>
+                  <h1>Model &amp; Resources</h1>
+                  <p className="lead">
+                    Choose an AI model and set the resource cap. Fidus and HiveMind will respect
+                    these limits when running tasks.
+                  </p>
+                </div>
+              </header>
+
+              <section className="engine-model-grid" aria-label="Select AI model">
+                {engineModels.map((model) => (
+                  <button
+                    key={model.id}
+                    type="button"
+                    className={
+                      selectedEngineModel === model.id
+                        ? 'engine-model-card selected'
+                        : 'engine-model-card'
+                    }
+                    onClick={() => {
+                      setSelectedEngineModel(model.id)
+                      setStatusKind('success')
+                      setStatus(`${model.name} model selected.`)
+                    }}
+                  >
+                    <div className="engine-model-head">
+                      <span className="engine-model-name">{model.name}</span>
+                      <span className={`engine-load-badge load-${model.id}`}>{model.load}</span>
+                    </div>
+                    <p className="engine-model-desc">{model.description}</p>
+                    <div className="engine-model-specs">
+                      <span>{model.vram}</span>
+                      <span>{model.cpu}</span>
+                    </div>
+                  </button>
+                ))}
+              </section>
+
+              <section className="engine-resource-section">
+                <h3>Resource Cap</h3>
+                <p className="device-caption">
+                  Limits the maximum system resources Zenith may allocate. HiveMind inherits this as
+                  the per-device slider ceiling.
+                </p>
+                <div className="engine-slider-row">
+                  <label htmlFor="engine-resource">Performance: {engineResourcePercent}%</label>
+                  <input
+                    id="engine-resource"
+                    type="range"
+                    min={10}
+                    max={100}
+                    step={5}
+                    value={engineResourcePercent}
+                    onChange={(event) => setEngineResourcePercent(Number(event.target.value))}
+                    style={{ accentColor: 'var(--accent)' }}
+                  />
+                </div>
+                <div className="allocation-summary">
+                  <div className="summary-card">
+                    <p className="summary-label">Active Model</p>
+                    <p className="summary-value">{selectedModel.name}</p>
+                  </div>
+                  <div className="summary-card">
+                    <p className="summary-label">Resource Cap</p>
+                    <p className="summary-value">{engineResourcePercent}%</p>
+                  </div>
+                  <div className="summary-card">
+                    <p className="summary-label">Est. VRAM Required</p>
+                    <p className="summary-value">{selectedModel.vram}</p>
+                  </div>
+                </div>
+              </section>
+
+              {status && (
+                <p
+                  className={statusKind === 'success' ? 'status-message success' : 'status-message'}
+                >
+                  {status}
+                </p>
+              )}
+            </section>
+          </div>
+        </section>
+      </main>
+    )
+  }
+
   if (view === 'launcher') {
     return (
       <main className="layout">
@@ -1538,28 +1894,6 @@ function App() {
                   <p className="kicker">Zenith App Launcher</p>
                   <h1>Your Apps, One Home</h1>
                   <p className="lead">Choose an app below to open it when ready.</p>
-                </div>
-                <div className="header-actions">
-                  {isWebRuntime && (
-                    <button className="secondary-button" type="button" onClick={handleDownloadDesktop}>
-                      Get Desktop App
-                    </button>
-                  )}
-                  {!isWebRuntime && (
-                    <button className="secondary-button" type="button" onClick={handleCheckDesktopUpdates}>
-                      Check for Updates
-                    </button>
-                  )}
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => {
-                      setView('auth')
-                      setStatus('')
-                    }}
-                  >
-                    Sign Out
-                  </button>
                 </div>
               </header>
 
@@ -1606,6 +1940,12 @@ function App() {
                         return
                       }
 
+                      if (app.id === 'engine-layout') {
+                        setStatus('')
+                        setView('engine')
+                        return
+                      }
+
                       setStatusKind('success')
                       setStatus(`${app.name} is set up as a placeholder and ready for implementation.`)
                     }}
@@ -1634,7 +1974,7 @@ function App() {
       <section className="auth-shell">
         <aside className="auth-copy">
           <p className="kicker">Zenith-app.net</p>
-          <h1>Secure Access for Your Next Build</h1>
+          <h1>Zenith Alpha</h1>
           <p className="lead">{helperText}</p>
         </aside>
 
