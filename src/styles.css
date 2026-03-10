@@ -306,6 +306,29 @@ body {
   font-size: 0.85rem;
 }
 
+.sidebar-link-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  color: var(--accent);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.sidebar-link-card:hover {
+  background: rgba(139,92,246,0.18);
+  border-color: var(--accent);
+}
+.sidebar-link-arrow {
+  font-size: 1rem;
+  opacity: 0.7;
+}
+
 .device-list {
   list-style: none;
   margin: 0;
@@ -761,7 +784,7 @@ body {
   height: 540px;
   overflow-y: auto;
   display: grid;
-  align-content: start;
+  align-content: end;
   gap: 0.55rem;
 }
 

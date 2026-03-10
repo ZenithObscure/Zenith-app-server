@@ -279,6 +279,12 @@ function App() {
   const [hiveQuery, setHiveQuery] = useState('Generate a deployment plan and split subtasks for parallel processing.')
   const [hiveAssignments, setHiveAssignments] = useState<HiveAssignment[]>([])
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
+  const fidusThreadRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    const el = fidusThreadRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [fidusConversations])
   const [selectedEngineModel, setSelectedEngineModel] = useState<string>('standard')
   const [engineResourcePercent, setEngineResourcePercent] = useState(50)
   const [hiveSettingsLocked, setHiveSettingsLocked] = useState(false)
@@ -1068,28 +1074,15 @@ function App() {
 
       <div className="device-section">
         <h3>Active Connections</h3>
-        <p className="device-caption">Devices signed in to your Zenith account.</p>
-        <ul className="device-list">
-          {devices.map((device) => (
-            <li key={device.id} className="device-item">
-              <div>
-                <span className="device-name">{device.name}</span>
-                <span className="device-subtext">{device.type}</span>
-                {device.appInstalled && device.status === 'Online' && (
-                  <span className="app-session-dot" title="Zenith app active on this device" />
-                )}
-              </div>
-              <div className="device-indicators">
-                {device.storageContributionGb > 0 && device.status === 'Online' && (
-                  <span className="cloud-check" title="Cloud storage online &mdash; accessible from all devices">☁</span>
-                )}
-                <span className={device.status === 'Online' ? 'device-badge online' : 'device-badge'}>
-                  {device.status}
-                </span>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <p className="device-caption">{onlineDeviceCount} of {devices.length} device{devices.length !== 1 ? 's' : ''} online</p>
+        <button
+          type="button"
+          className="sidebar-link-card"
+          onClick={() => setView('devices')}
+        >
+          <span>Manage in Devices</span>
+          <span className="sidebar-link-arrow">→</span>
+        </button>
       </div>
 
       <div className="sidebar-bottom">
@@ -1560,7 +1553,7 @@ function App() {
 
                 {/* Chat Area */}
                 <div className="fidus-chat-area">
-                  <section className="fidus-thread" aria-label="Fidus conversation">
+                  <section className="fidus-thread" aria-label="Fidus conversation" ref={fidusThreadRef}>
                     {fidusMessages.map((message) => (
                       <article
                         key={message.id}
