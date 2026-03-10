@@ -282,9 +282,10 @@ function App() {
   const fidusThreadRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
+    if (view !== 'fidus') return
     const el = fidusThreadRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [fidusConversations])
+  }, [fidusConversations, view])
   const [selectedEngineModel, setSelectedEngineModel] = useState<string>('standard')
   const [engineResourcePercent, setEngineResourcePercent] = useState(50)
   const [hiveSettingsLocked, setHiveSettingsLocked] = useState(false)
