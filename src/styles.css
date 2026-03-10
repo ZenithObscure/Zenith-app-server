@@ -172,6 +172,121 @@ body {
   color: var(--muted-ink);
 }
 
+.hive-status-panel {
+  margin-top: 0.6rem;
+  border: 1px solid rgba(232, 121, 249, 0.2);
+  border-radius: 13px;
+  background: rgba(232, 121, 249, 0.04);
+  padding: 0.65rem 0.7rem;
+}
+
+.hive-status-header {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.5rem;
+}
+
+.hive-status-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--ink);
+  flex: 1;
+}
+
+.hive-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--online-color);
+  box-shadow: 0 0 6px var(--online-color);
+  flex-shrink: 0;
+}
+
+.hive-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+}
+
+.hive-status-label {
+  font-size: 0.78rem;
+  color: var(--muted-ink);
+}
+
+.hive-status-value {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.hive-status-empty {
+  margin: 0.3rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted-ink);
+}
+
+.hive-device-mini-list {
+  list-style: none;
+  margin: 0.45rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.4rem;
+}
+
+.hive-device-mini-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.hive-device-mini-left {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.hive-device-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.hive-device-dot.contributing {
+  background: var(--online-color);
+  box-shadow: 0 0 5px var(--online-color);
+}
+
+.hive-device-dot.ready {
+  background: #fcd34d;
+}
+
+.hive-device-dot.offline {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.hive-device-mini-name {
+  font-size: 0.79rem;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hive-device-mini-meta {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--muted-ink);
+  flex-shrink: 0;
+}
+
 .device-section {
   margin-top: 1rem;
   flex: 1;

@@ -979,6 +979,62 @@ function App() {
         </button>
       </div>
 
+      {(() => {
+        const hiveWorkers = devices.filter((d) => d.role === 'Worker' && d.appInstalled)
+        const hiveReady = hiveWorkers.filter((d) => d.status === 'Online')
+        const hiveActive = hiveReady.filter((d) => (hiveContribution[d.id] ?? 0) > 0)
+        return (
+          <div className="hive-status-panel">
+            <div className="hive-status-header">
+              <span className="hive-status-title">HiveMind Status</span>
+              {hiveMindEnabled && <span className="hive-status-dot" />}
+            </div>
+            <div className="hive-status-row">
+              <span className="hive-status-label">Total Contribution</span>
+              <span className="hive-status-value">{hiveTotalContribution}%</span>
+            </div>
+            <div className="hive-status-row">
+              <span className="hive-status-label">Active Workers</span>
+              <span className="hive-status-value">{hiveActive.length} / {hiveWorkers.length}</span>
+            </div>
+            {hiveWorkers.length === 0 ? (
+              <p className="hive-status-empty">No Worker devices with app installed.</p>
+            ) : (
+              <ul className="hive-device-mini-list">
+                {hiveWorkers.map((device) => {
+                  const contribution = hiveContribution[device.id] ?? 0
+                  const isOnline = device.status === 'Online'
+                  const isContributing = isOnline && contribution > 0
+                  return (
+                    <li key={device.id} className="hive-device-mini-item">
+                      <div className="hive-device-mini-left">
+                        <span
+                          className={
+                            isContributing
+                              ? 'hive-device-dot contributing'
+                              : isOnline
+                              ? 'hive-device-dot ready'
+                              : 'hive-device-dot offline'
+                          }
+                        />
+                        <span className="hive-device-mini-name">{device.name}</span>
+                      </div>
+                      <span className="hive-device-mini-meta">
+                        {isContributing
+                          ? `${contribution}%`
+                          : isOnline
+                          ? 'Ready'
+                          : 'Offline'}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+        )
+      })()}
+
       <div className="device-section">
         <h3>Active Connections</h3>
         <p className="device-caption">Devices signed in to your Zenith account.</p>
