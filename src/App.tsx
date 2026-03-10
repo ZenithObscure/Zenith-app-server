@@ -34,6 +34,8 @@ type DriveNode = {
   kind: 'folder' | 'file'
   parentId: string | null
   isImage: boolean
+  mimeType?: string | null
+  sizeBytes?: number | null
   deviceId?: string
 }
 
@@ -801,29 +803,34 @@ function App() {
     setStatus(`${node.kind === 'folder' ? 'Folder' : 'File'} renamed successfully.`)
   }
 
-  const handleUploadPlaceholder = async (event: ChangeEvent<HTMLInputElement>) => {
+  const handleUploadFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
-
-    if (!files || files.length === 0) {
-      return
-    }
+    if (!files || files.length === 0) return
 
     const parentId = driveTargetFolderId === 'root' ? null : driveTargetFolderId
+    const formData = new FormData()
     for (const file of Array.from(files)) {
-      await apiFetch('/api/drive', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: file.name,
-          kind: 'file',
-          parentId,
-          isImage: file.type.startsWith('image/'),
-        }),
-      })
+      formData.append('files', file)
+    }
+    if (parentId) formData.append('parentId', parentId)
+    else formData.append('parentId', 'null')
+
+    const response = await fetch(`${API_BASE}/api/drive/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: formData,
+    })
+
+    if (!response.ok) {
+      setStatusKind('error')
+      setStatus('Upload failed. Please try again.')
+      event.target.value = ''
+      return
     }
 
     await loadApiState()
     setStatusKind('success')
-    setStatus(`${files.length} file(s) added to Drive as placeholders.`)
+    setStatus(`${files.length} file(s) uploaded to Drive.`)
     event.target.value = ''
   }
 
@@ -907,10 +914,38 @@ function App() {
           <span className="tree-kind">{node.kind === 'folder' ? 'Folder' : 'File'}</span>
           <span className="tree-name-wrap">
             {node.name}
+            {node.sizeBytes != null && node.kind === 'file' && (
+              <em className="drive-file-size">{node.sizeBytes < 1024 * 1024
+                ? `${(node.sizeBytes / 1024).toFixed(1)} KB`
+                : `${(node.sizeBytes / (1024 * 1024)).toFixed(1)} MB`}</em>
+            )}
             {node.isImage && <span className="album-tag">Photo Album</span>}
             {nodeDevice && <em className="drive-device-label">on {nodeDevice.name}</em>}
           </span>
           <span className="tree-actions">
+            {node.kind === 'file' && (
+              <button
+                className="mini-button"
+                type="button"
+                title={`Download ${node.name}`}
+                onClick={async (e) => {
+                  e.stopPropagation()
+                  const res = await fetch(`${API_BASE}/api/drive/${node.id}/content`, {
+                    headers: { Authorization: `Bearer ${authToken}` },
+                  })
+                  if (!res.ok) return
+                  const blob = await res.blob()
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = node.name
+                  a.click()
+                  URL.revokeObjectURL(url)
+                }}
+              >
+                ↓
+              </button>
+            )}
             {node.isImage && (
               <button
                 className="mini-button"
@@ -1371,7 +1406,7 @@ function App() {
                 className="hidden-input"
                 type="file"
                 multiple
-                onChange={handleUploadPlaceholder}
+                onChange={handleUploadFiles}
               />
 
               <section className="drive-toolbar">

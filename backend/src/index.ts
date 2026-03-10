@@ -4,7 +4,9 @@ import Database from 'better-sqlite3'
 import express, { NextFunction, Request, Response } from 'express'
 import helmet from 'helmet'
 import jwt from 'jsonwebtoken'
+import multer from 'multer'
 import { fileURLToPath } from 'node:url'
+import fs from 'node:fs'
 import path from 'node:path'
 import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
@@ -30,6 +32,8 @@ type DriveNode = {
   kind: 'folder' | 'file'
   parentId: string | null
   isImage: boolean
+  mimeType: string | null
+  sizeBytes: number | null
 }
 
 type UserAccount = {
@@ -52,6 +56,26 @@ type AuthRequest = Request & {
 const app = express()
 const port = Number(process.env.PORT ?? 8787)
 const dbPath = process.env.DB_PATH ?? path.resolve(process.cwd(), 'backend/data/zenith.db')
+const uploadDir = process.env.UPLOAD_DIR ?? path.resolve(process.cwd(), 'backend/uploads')
+fs.mkdirSync(uploadDir, { recursive: true })
+
+const multerStorage = multer.diskStorage({
+  destination: (req: Request, _file, cb) => {
+    const userId = (req as AuthRequest).userId ?? 'unknown'
+    const userDir = path.join(uploadDir, userId)
+    fs.mkdirSync(userDir, { recursive: true })
+    cb(null, userDir)
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname)
+    cb(null, `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}${ext}`)
+  },
+})
+
+const upload = multer({
+  storage: multerStorage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
+})
 const jwtSecret = process.env.JWT_SECRET ?? 'dev-only-change-me'
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000,http://localhost:5173').split(',')
 const db = new Database(dbPath)
@@ -172,6 +196,9 @@ const initSchema = () => {
       kind TEXT NOT NULL,
       parent_id TEXT,
       is_image INTEGER NOT NULL,
+      mime_type TEXT,
+      size_bytes INTEGER,
+      storage_path TEXT,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY(parent_id) REFERENCES drive_nodes(id) ON DELETE CASCADE
     );
@@ -191,6 +218,15 @@ const initSchema = () => {
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
   `)
+
+  // Add new columns to drive_nodes if they don't exist
+  for (const col of [
+    'ADD COLUMN mime_type TEXT',
+    'ADD COLUMN size_bytes INTEGER',
+    'ADD COLUMN storage_path TEXT',
+  ]) {
+    try { db.exec(`ALTER TABLE drive_nodes ${col}`) } catch { /* already exists */ }
+  }
 
   // Add user_id columns to existing tables if they don't have them
   try {
@@ -343,7 +379,7 @@ const readDevices = (userId: string): DeviceInfo[] => {
 
 const readDriveNodes = (userId: string): DriveNode[] => {
   const rows = db.prepare(`
-    SELECT id, name, kind, parent_id, is_image
+    SELECT id, name, kind, parent_id, is_image, mime_type, size_bytes
     FROM drive_nodes
     WHERE user_id = ?
   `).all(userId) as Array<{
@@ -352,6 +388,8 @@ const readDriveNodes = (userId: string): DriveNode[] => {
     kind: 'folder' | 'file'
     parent_id: string | null
     is_image: number
+    mime_type: string | null
+    size_bytes: number | null
   }>
 
   return rows.map((row) => ({
@@ -360,6 +398,8 @@ const readDriveNodes = (userId: string): DriveNode[] => {
     kind: row.kind,
     parentId: row.parent_id,
     isImage: row.is_image === 1,
+    mimeType: row.mime_type ?? null,
+    sizeBytes: row.size_bytes ?? null,
   }))
 }
 
@@ -648,6 +688,78 @@ app.patch('/api/drive/:id', requireAuth, (req: AuthRequest, res) => {
   res.json({ node })
 })
 
+app.post('/api/drive/upload', requireAuth, upload.array('files', 20), (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const files = req.files as Express.Multer.File[] | undefined
+
+  if (!files || files.length === 0) {
+    res.status(400).json({ error: 'No files provided' })
+    return
+  }
+
+  const parentId = (req.body?.parentId === 'null' || !req.body?.parentId) ? null : req.body.parentId as string
+  const imagePattern = /\.(png|jpe?g|gif|webp|bmp)$/i
+  const insertStmt = db.prepare(
+    `INSERT INTO drive_nodes (id, user_id, name, kind, parent_id, is_image, mime_type, size_bytes, storage_path)
+     VALUES (?, ?, ?, 'file', ?, ?, ?, ?, ?)`,
+  )
+
+  const nodes: DriveNode[] = []
+  const tx = db.transaction(() => {
+    for (const file of files) {
+      const nodeId = `file-${serial()}`
+      insertStmt.run(
+        nodeId,
+        userId,
+        file.originalname,
+        parentId,
+        imagePattern.test(file.originalname) ? 1 : 0,
+        file.mimetype,
+        file.size,
+        file.path,
+      )
+      nodes.push({
+        id: nodeId,
+        name: file.originalname,
+        kind: 'file',
+        parentId,
+        isImage: imagePattern.test(file.originalname),
+        mimeType: file.mimetype,
+        sizeBytes: file.size,
+      })
+    }
+  })
+  tx()
+
+  res.status(201).json({ nodes })
+})
+
+app.get('/api/drive/:id/content', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const row = db.prepare(
+    'SELECT name, mime_type, storage_path FROM drive_nodes WHERE id = ? AND user_id = ? AND kind = \'file\'',
+  ).get(req.params.id, userId) as { name: string; mime_type: string | null; storage_path: string | null } | undefined
+
+  if (!row) {
+    res.status(404).json({ error: 'File not found' })
+    return
+  }
+
+  if (!row.storage_path) {
+    res.status(410).json({ error: 'File content not available (metadata-only record)' })
+    return
+  }
+
+  if (!fs.existsSync(row.storage_path)) {
+    res.status(404).json({ error: 'File content missing from storage' })
+    return
+  }
+
+  res.setHeader('Content-Disposition', `attachment; filename="${row.name}"`)
+  if (row.mime_type) res.setHeader('Content-Type', row.mime_type)
+  res.sendFile(row.storage_path)
+})
+
 app.delete('/api/drive/:id', requireAuth, (req: AuthRequest, res) => {
   const userId = req.userId!
   const target = db.prepare('SELECT id FROM drive_nodes WHERE id = ? AND user_id = ?').get(req.params.id, userId)
@@ -656,19 +768,27 @@ app.delete('/api/drive/:id', requireAuth, (req: AuthRequest, res) => {
     return
   }
 
-  const collect = (nodeId: string): string[] => {
+  const collect = (nodeId: string): Array<{ id: string; storage_path: string | null }> => {
     const children = db
       .prepare('SELECT id FROM drive_nodes WHERE parent_id = ? AND user_id = ?')
       .all(nodeId, userId) as Array<{ id: string }>
-    return [nodeId, ...children.flatMap((child) => collect(child.id))]
+    const self = db.prepare('SELECT id, storage_path FROM drive_nodes WHERE id = ?').get(nodeId) as { id: string; storage_path: string | null }
+    return [self, ...children.flatMap((child) => collect(child.id))]
   }
 
-  const ids = collect(req.params.id as string)
+  const nodes = collect(req.params.id as string)
   const delStmt = db.prepare('DELETE FROM drive_nodes WHERE id = ?')
   const tx = db.transaction(() => {
-    ids.forEach((id) => delStmt.run(id))
+    nodes.forEach((node) => delStmt.run(node.id))
   })
   tx()
+
+  // Delete files from disk after DB transaction succeeds
+  nodes.forEach((node) => {
+    if (node.storage_path) {
+      try { fs.unlinkSync(node.storage_path) } catch { /* already gone */ }
+    }
+  })
 
   res.status(204).send()
 })
