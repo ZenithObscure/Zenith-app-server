@@ -2,7 +2,7 @@ import './styles.css'
 import { ChangeEvent, FormEvent, ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type AuthMode = 'login' | 'signup'
-type ViewMode = 'auth' | 'launcher' | 'devices' | 'drive' | 'fidus' | 'photo-album' | 'hivemind' | 'storage' | 'engine' | 'wallet'
+type ViewMode = 'auth' | 'launcher' | 'devices' | 'drive' | 'fidus' | 'photo-album' | 'hivemind' | 'storage' | 'engine' | 'wallet' | 'desktop'
 type StatusKind = 'error' | 'success'
 type DeviceStatus = 'Online' | 'Offline'
 type DeviceType = 'Laptop' | 'Stationary' | 'Phone' | 'Other'
@@ -172,9 +172,20 @@ const appTiles: AppTile[] = [
     ),
   },
   {
+    id: 'desktop',
+    name: 'Desktop App',
+    description: 'Download the native Zenith desktop app for Windows, macOS, and Linux.',
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm0 2v11h16V5H4Zm3 13h10v2H7v-2Zm5-10v4.6l1.8-1.8 1.4 1.4L12 16l-3.2-3.8 1.4-1.4L12 12.6V8h2Z" />
+      </svg>
+    ),
+  },
+  {
     id: 'wallet',
     name: 'Wallet',
     description: 'View your token balance, send tokens to other Zenith users, and check transaction history.',
+
     icon: (
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M2 7a3 3 0 0 1 3-3h14a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V7Zm3-1a1 1 0 0 0-1 1v1h16V7a1 1 0 0 0-1-1H5Zm-1 4v6a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-6H4Zm11 2h3v2h-3v-2Z" />
@@ -239,6 +250,8 @@ function App() {
   const [tokenBalance, setTokenBalance] = useState(0)
   const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([])
   const [walletRecipientEmail, setWalletRecipientEmail] = useState('')
+  const [desktopVersion, setDesktopVersion] = useState<string | null>(null)
+  const [desktopReleasesUrl, setDesktopReleasesUrl] = useState('https://github.com/ZenithObscure/Zenith-app/releases')
   const [walletAmount, setWalletAmount] = useState('')
   const [walletNote, setWalletNote] = useState('')
   const [walletSending, setWalletSending] = useState(false)
@@ -899,16 +912,16 @@ function App() {
     }).catch(() => { /* silent — messages already shown in UI */ })
   }
 
-  const handleDownloadDesktop = () => {
-    setStatusKind('success')
-    setStatus('Desktop app is on the roadmap. Check back soon — it will appear here when ready.')
-  }
-
-  const handleCheckDesktopUpdates = () => {
-    const releasesUrl = 'https://github.com/ZenithObscure/Zenith-app/releases'
-    window.open(releasesUrl, '_blank')
-    setStatusKind('success')
-    setStatus('Opened GitHub releases to check desktop updates.')
+  const handleOpenDesktopView = () => {
+    apiFetch('/api/updates/latest', {}).then(async (res) => {
+      if (res.ok) {
+        const data = (await res.json()) as { latestVersion: string; releasesUrl: string }
+        setDesktopVersion(data.latestVersion)
+        setDesktopReleasesUrl(data.releasesUrl)
+      }
+    }).catch(() => {})
+    setStatus('')
+    setView('desktop')
   }
 
   const renderDriveTree = (parentId: string | null, depth = 0): ReactElement[] => {
@@ -1148,15 +1161,9 @@ function App() {
       </div>
 
       <div className="sidebar-bottom">
-        {isWebRuntime ? (
-          <button className="secondary-button sidebar-full-btn" type="button" onClick={handleDownloadDesktop}>
-            Get Desktop App
-          </button>
-        ) : (
-          <button className="secondary-button sidebar-full-btn" type="button" onClick={handleCheckDesktopUpdates}>
-            Check for Updates
-          </button>
-        )}
+        <button className="secondary-button sidebar-full-btn" type="button" onClick={handleOpenDesktopView}>
+          {isWebRuntime ? 'Get Desktop App' : 'Desktop App & Updates'}
+        </button>
         <button className="logout-button" type="button" onClick={handleLogout}>
           Sign Out
         </button>
@@ -2094,6 +2101,157 @@ function App() {
     )
   }
 
+  if (view === 'desktop') {
+    const platforms = [
+      {
+        id: 'windows',
+        name: 'Windows',
+        sub: 'Windows 10 / 11 — 64-bit',
+        ext: '.exe',
+        icon: (
+          <svg className="desktop-platform-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 5.6 10.3 4.6v6.9H3V5.6Zm8.1-1.1L21 3v8.5h-9.9V4.5ZM3 12.5h7.3v6.9L3 18.4v-5.9Zm8.1 0H21V21l-9.9-1.4v-7.1Z" />
+          </svg>
+        ),
+      },
+      {
+        id: 'macos',
+        name: 'macOS',
+        sub: 'macOS 12 Monterey or later',
+        ext: '.dmg',
+        icon: (
+          <svg className="desktop-platform-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M16.7 4c.2 1-.3 2.1-1 2.8-.7.7-1.7 1.2-2.8 1.1-.2-1 .3-2 1-2.8.7-.7 1.8-1.2 2.8-1.1ZM12.4 9c1.1 0 2.2.6 2.9.6.7 0 1.9-.7 3.2-.6.5 0 2 .2 2.9 1.6l-.1.1c-.9.5-1.6 1.5-1.5 2.8 0 1.5.9 2.8 2.2 3.4-.3 1-.7 2-1.3 2.8-.8 1.1-1.6 2.2-2.9 2.3-1.2 0-1.6-.8-3-.8-1.5 0-1.9.8-3.1.8-1.2 0-2.1-1.1-2.9-2.3-1-1.5-1.8-3.7-1.8-5.8 0-3.4 2.1-5.2 4.2-5.2 1.2 0 2.2.7 3.2.7Z" />
+          </svg>
+        ),
+      },
+      {
+        id: 'linux',
+        name: 'Linux',
+        sub: 'Ubuntu, Fedora, Debian — x64',
+        ext: '.AppImage',
+        icon: (
+          <svg className="desktop-platform-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2Zm-1 14.5v-2h2v2h-2Zm1.3-4.2c-.9.3-1.3 1-1.3 1.7h-2c0-1.6 1-2.9 2.5-3.4 1-.3 1.5-1.1 1.5-2.1 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.2 1.8-4 4-4s4 1.8 4 4c0 1.5-.8 2.9-2.7 3.8Z" />
+          </svg>
+        ),
+      },
+    ]
+
+    const latestVersion = desktopVersion ?? '0.1.0'
+    const releasesUrl = desktopReleasesUrl
+
+    return (
+      <main className="layout">
+        <section className="launcher-shell">
+          <div className="launcher-layout">
+            {renderSidebar()}
+
+            <section className="launcher-main">
+              <header className="launcher-header">
+                <button
+                  type="button"
+                  className="back-btn"
+                  onClick={() => setView('launcher')}
+                  aria-label="Back to launcher"
+                >
+                  ←
+                </button>
+                <div>
+                  <p className="kicker">Download</p>
+                  <h1>Desktop App</h1>
+                  <p className="lead">
+                    Run Zenith natively on your machine — background sync, system tray, native notifications.
+                    {desktopVersion && (
+                      <> &mdash; Latest release: <strong>v{desktopVersion}</strong></>
+                    )}
+                  </p>
+                </div>
+              </header>
+
+              {!isWebRuntime && (
+                <div className="desktop-already-banner">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" className="desktop-banner-icon">
+                    <path d="M9 12.4 6.6 10 5.2 11.4l3.8 3.8 8-8L15.6 5.8 9 12.4Z" />
+                  </svg>
+                  <span>You are already running the Zenith desktop app.</span>
+                  <button
+                    type="button"
+                    className="mini-button"
+                    onClick={() => {
+                      window.open(releasesUrl, '_blank')
+                    }}
+                  >
+                    View release notes
+                  </button>
+                </div>
+              )}
+
+              <section className="desktop-platform-grid" aria-label="Platform downloads">
+                {platforms.map((p) => (
+                  <div className="desktop-platform-card" key={p.id}>
+                    <div className="desktop-platform-header">
+                      {p.icon}
+                      <div>
+                        <p className="desktop-platform-name">{p.name}</p>
+                        <p className="desktop-platform-sub">{p.sub}</p>
+                      </div>
+                    </div>
+                    <p className="desktop-platform-file">
+                      zenith-{latestVersion}-{p.id}{p.ext}
+                    </p>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      style={{ width: '100%' }}
+                      onClick={() => window.open(releasesUrl, '_blank')}
+                    >
+                      Download {p.ext}
+                    </button>
+                  </div>
+                ))}
+              </section>
+
+              <section className="desktop-features">
+                <p className="section-title">Why use the desktop app?</p>
+                <ul className="desktop-feature-list">
+                  {[
+                    { icon: '⚡', title: 'Faster sync', desc: 'Direct Drive and Fidus sync without browser restrictions.' },
+                    { icon: '🔔', title: 'Native notifications', desc: 'Get notified when HiveMind jobs complete or tokens are received.' },
+                    { icon: '🖥', title: 'System tray', desc: 'Runs quietly in the background while you work.' },
+                    { icon: '🔒', title: 'Local-first privacy', desc: 'Encrypted local SQLite cache — your data stays on your machine.' },
+                    { icon: '♻️', title: 'Automatic updates', desc: 'Stays current silently — auto-update checks on launch.' },
+                  ].map((f) => (
+                    <li className="desktop-feature-item" key={f.title}>
+                      <span className="desktop-feature-icon">{f.icon}</span>
+                      <div>
+                        <p className="desktop-feature-title">{f.title}</p>
+                        <p className="desktop-feature-desc">{f.desc}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+
+              <div className="desktop-footer-row">
+                <p className="device-caption">
+                  Zenith Desktop is built with Electron and open-sourced on GitHub.
+                </p>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => window.open(releasesUrl, '_blank')}
+                >
+                  View all releases →
+                </button>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    )
+  }
+
   if (view === 'wallet') {
     const handleSendTokens = async (e: FormEvent<HTMLFormElement>) => {
       e.preventDefault()
@@ -2305,6 +2463,11 @@ function App() {
                       if (app.id === 'wallet') {
                         setStatus('')
                         setView('wallet')
+                        return
+                      }
+
+                      if (app.id === 'desktop') {
+                        handleOpenDesktopView()
                         return
                       }
 

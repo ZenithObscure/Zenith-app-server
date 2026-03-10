@@ -990,6 +990,159 @@ body {
   color: var(--muted-ink);
 }
 
+.wallet-tx-date {
+  font-size: 0.72rem;
+  color: var(--muted-ink);
+}
+
+/* ─── Desktop App ────────────────────────────────────────────────────────────── */
+.desktop-already-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--online-border);
+  background: var(--online-bg);
+  border-radius: 10px;
+  color: var(--online-color);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.desktop-banner-icon {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  flex-shrink: 0;
+}
+
+.desktop-already-banner .mini-button {
+  margin-left: auto;
+}
+
+.desktop-platform-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+@media (max-width: 900px) {
+  .desktop-platform-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.desktop-platform-card {
+  display: grid;
+  gap: 0.8rem;
+  padding: 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  transition: border-color 150ms ease;
+}
+
+.desktop-platform-card:hover {
+  border-color: var(--border-hover);
+}
+
+.desktop-platform-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.desktop-platform-icon {
+  width: 32px;
+  height: 32px;
+  fill: var(--accent);
+  flex-shrink: 0;
+}
+
+.desktop-platform-name {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.desktop-platform-sub {
+  margin: 0.1rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted-ink);
+}
+
+.desktop-platform-file {
+  margin: 0;
+  font-size: 0.78rem;
+  font-family: 'Fira Code', 'Courier New', monospace;
+  color: var(--muted-ink);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  word-break: break-all;
+}
+
+.desktop-features {
+  margin-bottom: 1.5rem;
+}
+
+.desktop-feature-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.7rem;
+}
+
+@media (max-width: 700px) {
+  .desktop-feature-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+.desktop-feature-item {
+  display: flex;
+  gap: 0.8rem;
+  align-items: flex-start;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.desktop-feature-icon {
+  font-size: 1.3rem;
+  flex-shrink: 0;
+  line-height: 1.3;
+}
+
+.desktop-feature-title {
+  margin: 0 0 0.1rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.desktop-feature-desc {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted-ink);
+  line-height: 1.5;
+}
+
+.desktop-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
 /* ─── Photo Album ────────────────────────────────────────────────────────────── */
 .album-photo-grid {
   margin-top: 1rem;
