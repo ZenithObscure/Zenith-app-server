@@ -75,7 +75,7 @@ app.use(express.json({ limit: '10mb' }))
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // 5 requests per windowMs
-  message: 'Too many auth attempts, please try again later',
+  message: { error: 'rate_limited', message: 'Too many attempts. Please wait 15 minutes before trying again.' },
   standardHeaders: true,
   legacyHeaders: false,
 })
@@ -397,7 +397,7 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
   const email = parsed.data.email.toLowerCase()
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email)
   if (existing) {
-    res.status(409).json({ error: 'Email already exists' })
+    res.status(409).json({ error: 'email_taken', message: 'An account with this email already exists. Try logging in instead.' })
     return
   }
 
@@ -431,7 +431,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     .get(email) as UserAccount | undefined
 
   if (!user) {
-    res.status(401).json({ error: 'Invalid credentials' })
+    res.status(401).json({ error: 'no_account', message: 'No account found with this email. Check for typos or sign up for a new account.' })
     return
   }
 
@@ -441,7 +441,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     : user.password === parsed.data.password
 
   if (!validCredentials) {
-    res.status(401).json({ error: 'Invalid credentials' })
+    res.status(401).json({ error: 'wrong_password', message: 'Incorrect password. Please try again.' })
     return
   }
 

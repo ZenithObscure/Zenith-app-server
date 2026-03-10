@@ -368,14 +368,30 @@ function App() {
       return
     }
 
-    const response = await apiFetch('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email: loginEmail, password: loginPassword }),
-    })
+    let response: Response
+    try {
+      response = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+      })
+    } catch {
+      setStatusKind('error')
+      setStatus('Unable to reach the server. Check your connection and try again.')
+      return
+    }
 
     if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: string; message?: string } | null
       setStatusKind('error')
-      setStatus('Login failed. Please check your credentials.')
+      if (body?.error === 'no_account') {
+        setStatus(body.message ?? 'No account found with this email.')
+      } else if (body?.error === 'wrong_password') {
+        setStatus(body.message ?? 'Incorrect password.')
+      } else if (body?.error === 'rate_limited') {
+        setStatus(body.message ?? 'Too many attempts. Please wait before trying again.')
+      } else {
+        setStatus(body?.message ?? 'Login failed. Please check your credentials.')
+      }
       return
     }
 
@@ -418,18 +434,32 @@ function App() {
       return
     }
 
-    const response = await apiFetch('/api/auth/signup', {
-      method: 'POST',
-      body: JSON.stringify({
-        name: signupName.trim(),
-        email: signupEmail,
-        password: signupPassword,
-      }),
-    })
+    let response: Response
+    try {
+      response = await apiFetch('/api/auth/signup', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: signupName.trim(),
+          email: signupEmail,
+          password: signupPassword,
+        }),
+      })
+    } catch {
+      setStatusKind('error')
+      setStatus('Unable to reach the server. Check your connection and try again.')
+      return
+    }
 
     if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: string; message?: string } | null
       setStatusKind('error')
-      setStatus('Signup failed. Email may already be in use.')
+      if (body?.error === 'email_taken') {
+        setStatus(body.message ?? 'An account with this email already exists.')
+      } else if (body?.error === 'rate_limited') {
+        setStatus(body.message ?? 'Too many attempts. Please wait before trying again.')
+      } else {
+        setStatus(body?.message ?? 'Signup failed. Please try again.')
+      }
       return
     }
 
