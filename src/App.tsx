@@ -203,43 +203,6 @@ const starterDriveNodes: DriveNode[] = [
   { id: 'folder-shared', name: 'Shared Workspace', kind: 'folder', parentId: null, isImage: false, deviceId: 'computer-1' },
 ]
 
-const starterConversations: FidusConversation[] = [
-  {
-    id: 'conv-init',
-    title: 'New Chat',
-    messages: [
-      { id: 'm1', role: 'fidus', text: "Hello! I'm Fidus 🐱 What can I help you with today?" },
-    ],
-  },
-  {
-    id: 'conv-past-1',
-    title: 'Deployment Pipeline',
-    messages: [
-      { id: 'p1m1', role: 'fidus', text: "Hello! I'm Fidus 🐱 What can I help you with today?" },
-      { id: 'p1m2', role: 'user', text: 'Help me draft a deployment checklist for the backend.' },
-      { id: 'p1m3', role: 'fidus', text: "Sure! Here's a quick checklist:\n1. Run all tests\n2. Build the frontend bundle (npm run build)\n3. Push to GitHub main\n4. SSH to server and git pull\n5. npm install + systemctl restart\n6. Verify health endpoint responds OK" },
-    ],
-  },
-  {
-    id: 'conv-past-2',
-    title: 'HiveMind Architecture',
-    messages: [
-      { id: 'p2m1', role: 'fidus', text: "Hello! I'm Fidus 🐱 What can I help you with today?" },
-      { id: 'p2m2', role: 'user', text: 'Explain how HiveMind distributed processing works.' },
-      { id: 'p2m3', role: 'fidus', text: 'HiveMind splits AI inference tasks across Worker devices. Each Worker runs a portion of the workload proportional to its contribution slider. Results are recombined and tokens are distributed to contributors automatically.' },
-    ],
-  },
-  {
-    id: 'conv-past-3',
-    title: 'Engine Model Comparison',
-    messages: [
-      { id: 'p3m1', role: 'fidus', text: "Hello! I'm Fidus 🐱 What can I help you with today?" },
-      { id: 'p3m2', role: 'user', text: 'Which engine model should I use for coding tasks?' },
-      { id: 'p3m3', role: 'fidus', text: 'For coding tasks I\'d recommend Standard — it balances speed and reasoning well. Use Power only if you have 16+ GB VRAM and need deep multi-file analysis. Compact is great for quick lookups and completions on lower-end hardware.' },
-    ],
-  },
-]
-
 function App() {
   const [authToken, setAuthToken] = useState(() =>
     typeof window !== 'undefined' ? localStorage.getItem('zenith_auth_token') ?? '' : '',
@@ -271,7 +234,7 @@ function App() {
   const [newFolderName, setNewFolderName] = useState('')
   const [newFileName, setNewFileName] = useState('')
   const [fidusInput, setFidusInput] = useState('')
-  const [fidusConversations, setFidusConversations] = useState<FidusConversation[]>(starterConversations)
+  const [fidusConversations, setFidusConversations] = useState<FidusConversation[]>([])
   const [activeFidusConvId, setActiveFidusConvId] = useState<string>('conv-init')
   const [selectedMockPhotoId, setSelectedMockPhotoId] = useState<string | null>(null)
   const [hiveMindEnabled, setHiveMindEnabled] = useState(false)
@@ -386,12 +349,23 @@ function App() {
     applyApiState(payload)
   }, [apiFetch])
 
+  const loadFidusConversations = useCallback(async (tokenOverride?: string) => {
+    const res = await apiFetch('/api/conversations', {}, tokenOverride)
+    if (!res.ok) return
+    const data = (await res.json()) as { conversations: FidusConversation[] }
+    setFidusConversations(data.conversations)
+    setActiveFidusConvId((prev) => {
+      const exists = data.conversations.some((c) => c.id === prev)
+      return exists ? prev : (data.conversations[0]?.id ?? prev)
+    })
+  }, [apiFetch])
+
   useEffect(() => {
     if (!authToken) {
       return
     }
 
-    loadApiState()
+    Promise.all([loadApiState(), loadFidusConversations()])
       .then(() => {
         setView('launcher')
       })
@@ -401,7 +375,7 @@ function App() {
         setStatusKind('error')
         setStatus('Session restore failed. Please log in again and ensure backend API is running.')
       })
-  }, [authToken, loadApiState])
+  }, [authToken, loadApiState, loadFidusConversations])
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -448,7 +422,7 @@ function App() {
     const payload = (await response.json()) as AuthResponse
     persistAuthSession(payload)
     try {
-      await loadApiState(payload.token)
+      await Promise.all([loadApiState(payload.token), loadFidusConversations(payload.token)])
     } catch {
       // State will load on next render via useEffect
     }
@@ -516,7 +490,7 @@ function App() {
     const payload = (await response.json()) as AuthResponse
     persistAuthSession(payload)
     try {
-      await loadApiState(payload.token)
+      await Promise.all([loadApiState(payload.token), loadFidusConversations(payload.token)])
     } catch {
       // State will load on next render via useEffect
     }
@@ -852,7 +826,7 @@ function App() {
     return 'I can help with product planning, UI drafts, and implementation checklists. What should we build next?'
   }
 
-  const handleSendFidusMessage = (event: FormEvent<HTMLFormElement>) => {
+  const handleSendFidusMessage = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const nextText = fidusInput.trim()
 
@@ -872,14 +846,25 @@ function App() {
       text: getFidusReply(nextText),
     }
 
+    // Optimistic update (also auto-title on first real user message)
     setFidusConversations((prev) =>
       prev.map((conv) =>
         conv.id === activeFidusConvId
-          ? { ...conv, messages: [...conv.messages, userMessage, fidusReply] }
+          ? {
+              ...conv,
+              messages: [...conv.messages, userMessage, fidusReply],
+              title: conv.title === 'New Chat' ? nextText.slice(0, 30).trim() : conv.title,
+            }
           : conv,
       ),
     )
     setFidusInput('')
+
+    // Persist to backend (fire-and-forget, optimistic UI already updated)
+    apiFetch(`/api/conversations/${activeFidusConvId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ messages: [userMessage, fidusReply] }),
+    }).catch(() => { /* silent — messages already shown in UI */ })
   }
 
   const handleDownloadDesktop = () => {
@@ -1522,8 +1507,8 @@ function App() {
   }
 
   if (view === 'fidus') {
-    const activeConv = fidusConversations.find((c) => c.id === activeFidusConvId) ?? fidusConversations[0]!
-    const fidusMessages = activeConv.messages
+    const activeConv = fidusConversations.find((c) => c.id === activeFidusConvId) ?? fidusConversations[0]
+    const fidusMessages = activeConv?.messages ?? []
 
     return (
       <main className="layout">
@@ -1547,17 +1532,12 @@ function App() {
                     <button
                       className="mini-button"
                       type="button"
-                      onClick={() => {
-                        const newId = `conv-${Date.now()}`
-                        const newConv: FidusConversation = {
-                          id: newId,
-                          title: 'New Chat',
-                          messages: [
-                            { id: `${newId}-m1`, role: 'fidus', text: "Hello! I'm Fidus 🐱 What can I help you with today?" },
-                          ],
-                        }
-                        setFidusConversations((prev) => [newConv, ...prev])
-                        setActiveFidusConvId(newId)
+                      onClick={async () => {
+                        const res = await apiFetch('/api/conversations', { method: 'POST', body: JSON.stringify({}) })
+                        if (!res.ok) return
+                        const data = (await res.json()) as { conversation: FidusConversation }
+                        setFidusConversations((prev) => [data.conversation, ...prev])
+                        setActiveFidusConvId(data.conversation.id)
                       }}
                     >
                       + New

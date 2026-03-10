@@ -217,6 +217,25 @@ const initSchema = () => {
       token_balance REAL NOT NULL,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS fidus_conversations (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS fidus_messages (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY(conversation_id) REFERENCES fidus_conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `)
 
   // Add new columns to drive_nodes if they don't exist
@@ -421,6 +440,40 @@ const readTokenBalance = (userId: string) => {
 
 const updateTokenBalance = (userId: string, nextValue: number) => {
   db.prepare('UPDATE app_state SET token_balance = ? WHERE user_id = ?').run(nextValue, userId)
+}
+
+type ConvRow = { id: string; title: string }
+type MsgRow = { id: string; role: string; content: string }
+
+const readConversations = (userId: string) => {
+  const convs = db.prepare(
+    'SELECT id, title FROM fidus_conversations WHERE user_id = ? ORDER BY created_at DESC',
+  ).all(userId) as ConvRow[]
+  return convs.map((conv) => {
+    const msgs = db.prepare(
+      'SELECT id, role, content FROM fidus_messages WHERE conversation_id = ? ORDER BY created_at ASC',
+    ).all(conv.id) as MsgRow[]
+    return {
+      id: conv.id,
+      title: conv.title,
+      messages: msgs.map((m) => ({ id: m.id, role: m.role, text: m.content })),
+    }
+  })
+}
+
+const createDefaultConversation = (userId: string) => {
+  const convId = `conv-${serial()}`
+  const msgId = `msg-${serial()}`
+  const now = Date.now()
+  db.prepare('INSERT INTO fidus_conversations (id, user_id, title, created_at) VALUES (?, ?, ?, ?)').run(convId, userId, 'New Chat', now)
+  db.prepare('INSERT INTO fidus_messages (id, conversation_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+    msgId, convId, userId, 'fidus', "Hello! I'm Fidus 🐱 What can I help you with today?", now,
+  )
+  return {
+    id: convId,
+    title: 'New Chat',
+    messages: [{ id: msgId, role: 'fidus', text: "Hello! I'm Fidus 🐱 What can I help you with today?" }],
+  }
 }
 
 app.get('/api/health', (_req, res) => {
@@ -846,6 +899,70 @@ app.post('/api/hivemind/dispatch', requireAuth, (req: AuthRequest, res) => {
   tx()
 
   res.json({ assignments, totalReward, tokenBalance: nextTokenBalance })
+})
+
+app.get('/api/conversations', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  let convs = readConversations(userId)
+  if (convs.length === 0) {
+    convs = [createDefaultConversation(userId)]
+  }
+  res.json({ conversations: convs })
+})
+
+app.post('/api/conversations', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const conv = createDefaultConversation(userId)
+  res.status(201).json({ conversation: conv })
+})
+
+app.delete('/api/conversations/:id', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const row = db.prepare('SELECT id FROM fidus_conversations WHERE id = ? AND user_id = ?').get(req.params.id, userId)
+  if (!row) { res.status(404).json({ error: 'Not found' }); return }
+  db.prepare('DELETE FROM fidus_conversations WHERE id = ?').run(req.params.id)
+  res.json({ ok: true })
+})
+
+app.patch('/api/conversations/:id', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const { title } = req.body as { title?: string }
+  if (typeof title !== 'string' || !title.trim()) { res.status(400).json({ error: 'title required' }); return }
+  const row = db.prepare('SELECT id FROM fidus_conversations WHERE id = ? AND user_id = ?').get(req.params.id, userId)
+  if (!row) { res.status(404).json({ error: 'Not found' }); return }
+  db.prepare('UPDATE fidus_conversations SET title = ? WHERE id = ?').run(title.trim(), req.params.id)
+  res.json({ ok: true })
+})
+
+app.post('/api/conversations/:id/messages', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const convId = req.params.id
+  const conv = db.prepare('SELECT id, title FROM fidus_conversations WHERE id = ? AND user_id = ?').get(convId, userId) as { id: string; title: string } | undefined
+  if (!conv) { res.status(404).json({ error: 'Conversation not found' }); return }
+
+  const { messages } = req.body as { messages?: Array<{ id: string; role: string; text: string }> }
+  if (!Array.isArray(messages) || messages.length === 0) {
+    res.status(400).json({ error: 'messages array required' }); return
+  }
+
+  const now = Date.now()
+  const stmt = db.prepare(
+    'INSERT OR IGNORE INTO fidus_messages (id, conversation_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  )
+  db.transaction(() => {
+    for (const m of messages) {
+      stmt.run(m.id, convId, userId, m.role, m.text, now)
+    }
+  })()
+
+  // Auto-title: if still "New Chat", use first user message as title
+  const userMsg = messages.find((m) => m.role === 'user')
+  if (userMsg && conv.title === 'New Chat') {
+    const autoTitle = userMsg.text.slice(0, 30).trim()
+    db.prepare('UPDATE fidus_conversations SET title = ? WHERE id = ?').run(autoTitle, convId)
+  }
+
+  res.json({ ok: true })
 })
 
 app.get('/api/updates/latest', (_req, res) => {
