@@ -660,15 +660,108 @@ body {
 }
 
 /* ─── Fidus Chat ─────────────────────────────────────────────────────────────── */
-.fidus-thread {
+.fidus-shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 0.85rem;
   margin-top: 0.9rem;
+  min-height: 0;
+}
+
+.fidus-history {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: rgba(10, 5, 20, 0.5);
   padding: 0.7rem;
-  max-height: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 0;
+}
+
+.fidus-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.fidus-history-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted-ink);
+}
+
+.fidus-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.fidus-conv-item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 0.45rem 0.55rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.fidus-conv-item:hover {
+  background: rgba(232, 121, 249, 0.07);
+  border-color: var(--border);
+}
+
+.fidus-conv-item.active {
+  background: rgba(232, 121, 249, 0.12);
+  border-color: rgba(232, 121, 249, 0.4);
+}
+
+.fidus-conv-title {
+  display: block;
+  font-size: 0.83rem;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fidus-conv-preview {
+  display: block;
+  font-size: 0.74rem;
+  color: var(--muted-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fidus-chat-area {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  min-height: 0;
+}
+
+.fidus-thread {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(10, 5, 20, 0.5);
+  padding: 0.9rem;
+  height: 540px;
   overflow-y: auto;
   display: grid;
+  align-content: start;
   gap: 0.55rem;
 }
 
@@ -706,7 +799,6 @@ body {
 }
 
 .fidus-compose {
-  margin-top: 0.8rem;
   display: grid;
   gap: 0.45rem;
 }
@@ -722,62 +814,125 @@ body {
 }
 
 /* ─── Photo Album ────────────────────────────────────────────────────────────── */
-.album-grid {
+.album-photo-grid {
   margin-top: 1rem;
   display: grid;
-  gap: 0.7rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 
-.album-card {
+.album-photo-card {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.03);
-  padding: 0.65rem;
-  display: grid;
-  gap: 0.35rem;
-  justify-items: start;
+  padding: 0;
+  overflow: hidden;
   cursor: pointer;
   text-align: left;
   color: var(--ink);
-  transition: border-color 170ms ease;
+  transition: border-color 170ms ease, box-shadow 170ms ease;
+  display: flex;
+  flex-direction: column;
 }
 
-.album-card:hover {
+.album-photo-card:hover {
   border-color: var(--border-hover);
 }
 
-.album-card.active {
-  border-color: var(--border-glow);
-  box-shadow: 0 0 0 3px rgba(217, 70, 239, 0.15);
+.album-photo-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(217, 70, 239, 0.2);
 }
 
-.album-icon {
-  border: 1px solid rgba(167, 139, 250, 0.3);
-  border-radius: 8px;
-  background: rgba(167, 139, 250, 0.1);
-  color: #c4b5fd;
-  font-size: 0.7rem;
+.album-photo-thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 0.45rem;
+}
+
+.album-photo-tag {
+  font-size: 0.68rem;
   font-weight: 700;
-  padding: 0.15rem 0.35rem;
+  padding: 0.18rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  color: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(4px);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
-.album-preview {
-  margin-top: 0.9rem;
+.album-photo-meta {
+  padding: 0.5rem 0.6rem;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.album-photo-name {
+  display: block;
+  font-size: 0.83rem;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.album-photo-date {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted-ink);
+}
+
+.album-full-preview {
+  margin-top: 1rem;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  padding: 0.7rem;
+  border-radius: 16px;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+}
+
+.album-full-thumb {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.album-full-label {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+  padding: 1rem;
+  text-align: center;
+}
+
+.album-full-info {
+  padding: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.4rem;
+  background: rgba(10, 5, 20, 0.6);
+}
+
+.album-full-name {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
   color: var(--ink);
 }
 
-.album-preview h3,
-.album-preview p {
+.album-full-date {
   margin: 0;
-}
-
-.album-preview p + p {
-  margin-top: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--muted-ink);
 }
 
 /* ─── Modal ──────────────────────────────────────────────────────────────────── */

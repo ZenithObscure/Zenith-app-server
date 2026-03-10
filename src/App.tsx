@@ -50,6 +50,12 @@ type ChatMessage = {
   text: string
 }
 
+type FidusConversation = {
+  id: string
+  title: string
+  messages: ChatMessage[]
+}
+
 type HiveAssignment = {
   deviceId: string
   deviceName: string
@@ -195,11 +201,40 @@ const starterDriveNodes: DriveNode[] = [
   { id: 'folder-shared', name: 'Shared Workspace', kind: 'folder', parentId: null, isImage: false, deviceId: 'computer-1' },
 ]
 
-const starterMessages: ChatMessage[] = [
+const starterConversations: FidusConversation[] = [
   {
-    id: 'm1',
-    role: 'fidus',
-    text: 'Hello! I\'m Fidus 🐱 What can I help you with today?',
+    id: 'conv-init',
+    title: 'New Chat',
+    messages: [
+      { id: 'm1', role: 'fidus', text: "Hello! I'm Fidus 🐱 What can I help you with today?" },
+    ],
+  },
+  {
+    id: 'conv-past-1',
+    title: 'Deployment Pipeline',
+    messages: [
+      { id: 'p1m1', role: 'fidus', text: "Hello! I'm Fidus 🐱 What can I help you with today?" },
+      { id: 'p1m2', role: 'user', text: 'Help me draft a deployment checklist for the backend.' },
+      { id: 'p1m3', role: 'fidus', text: "Sure! Here's a quick checklist:\n1. Run all tests\n2. Build the frontend bundle (npm run build)\n3. Push to GitHub main\n4. SSH to server and git pull\n5. npm install + systemctl restart\n6. Verify health endpoint responds OK" },
+    ],
+  },
+  {
+    id: 'conv-past-2',
+    title: 'HiveMind Architecture',
+    messages: [
+      { id: 'p2m1', role: 'fidus', text: "Hello! I'm Fidus 🐱 What can I help you with today?" },
+      { id: 'p2m2', role: 'user', text: 'Explain how HiveMind distributed processing works.' },
+      { id: 'p2m3', role: 'fidus', text: 'HiveMind splits AI inference tasks across Worker devices. Each Worker runs a portion of the workload proportional to its contribution slider. Results are recombined and tokens are distributed to contributors automatically.' },
+    ],
+  },
+  {
+    id: 'conv-past-3',
+    title: 'Engine Model Comparison',
+    messages: [
+      { id: 'p3m1', role: 'fidus', text: "Hello! I'm Fidus 🐱 What can I help you with today?" },
+      { id: 'p3m2', role: 'user', text: 'Which engine model should I use for coding tasks?' },
+      { id: 'p3m3', role: 'fidus', text: 'For coding tasks I\'d recommend Standard — it balances speed and reasoning well. Use Power only if you have 16+ GB VRAM and need deep multi-file analysis. Compact is great for quick lookups and completions on lower-end hardware.' },
+    ],
   },
 ]
 
@@ -234,8 +269,9 @@ function App() {
   const [newFolderName, setNewFolderName] = useState('')
   const [newFileName, setNewFileName] = useState('')
   const [fidusInput, setFidusInput] = useState('')
-  const [fidusMessages, setFidusMessages] = useState<ChatMessage[]>(starterMessages)
-  const [selectedPhotoFileId, setSelectedPhotoFileId] = useState<string | null>(null)
+  const [fidusConversations, setFidusConversations] = useState<FidusConversation[]>(starterConversations)
+  const [activeFidusConvId, setActiveFidusConvId] = useState<string>('conv-init')
+  const [selectedMockPhotoId, setSelectedMockPhotoId] = useState<string | null>(null)
   const [hiveMindEnabled, setHiveMindEnabled] = useState(false)
   const [hiveContribution, setHiveContribution] = useState<Record<string, number>>(
     Object.fromEntries(starterDevices.map((device) => [device.id, 0])),
@@ -281,16 +317,6 @@ function App() {
   const folderOptions = useMemo(
     () => driveNodes.filter((node) => node.kind === 'folder'),
     [driveNodes],
-  )
-
-  const albumFiles = useMemo(
-    () => driveNodes.filter((node) => node.kind === 'file' && node.isImage),
-    [driveNodes],
-  )
-
-  const selectedPhotoFile = useMemo(
-    () => albumFiles.find((file) => file.id === selectedPhotoFileId) ?? null,
-    [albumFiles, selectedPhotoFileId],
   )
 
   const hiveResourcesConfigured = useMemo(
@@ -832,7 +858,13 @@ function App() {
       text: getFidusReply(nextText),
     }
 
-    setFidusMessages((prev) => [...prev, userMessage, fidusReply])
+    setFidusConversations((prev) =>
+      prev.map((conv) =>
+        conv.id === activeFidusConvId
+          ? { ...conv, messages: [...conv.messages, userMessage, fidusReply] }
+          : conv,
+      ),
+    )
     setFidusInput('')
   }
 
@@ -877,7 +909,6 @@ function App() {
                 className="mini-button"
                 type="button"
                 onClick={() => {
-                  setSelectedPhotoFileId(node.id)
                   setView('photo-album')
                 }}
               >
@@ -1462,6 +1493,9 @@ function App() {
   }
 
   if (view === 'fidus') {
+    const activeConv = fidusConversations.find((c) => c.id === activeFidusConvId) ?? fidusConversations[0]!
+    const fidusMessages = activeConv.messages
+
     return (
       <main className="layout">
         <section className="launcher-shell">
@@ -1476,34 +1510,85 @@ function App() {
                 </div>
               </header>
 
-              <section className="fidus-thread" aria-label="Fidus conversation">
-                {fidusMessages.map((message) => (
-                  <article
-                    key={message.id}
-                    className={message.role === 'user' ? 'fidus-bubble user' : 'fidus-bubble'}
-                  >
-                    <p className="fidus-role">{message.role === 'user' ? 'You' : 'Fidus'}</p>
-                    <p>{message.text}</p>
-                  </article>
-                ))}
-              </section>
+              <div className="fidus-shell">
+                {/* Past Conversations */}
+                <aside className="fidus-history" aria-label="Past conversations">
+                  <div className="fidus-history-head">
+                    <span className="fidus-history-title">Conversations</span>
+                    <button
+                      className="mini-button"
+                      type="button"
+                      onClick={() => {
+                        const newId = `conv-${Date.now()}`
+                        const newConv: FidusConversation = {
+                          id: newId,
+                          title: 'New Chat',
+                          messages: [
+                            { id: `${newId}-m1`, role: 'fidus', text: "Hello! I'm Fidus 🐱 What can I help you with today?" },
+                          ],
+                        }
+                        setFidusConversations((prev) => [newConv, ...prev])
+                        setActiveFidusConvId(newId)
+                      }}
+                    >
+                      + New
+                    </button>
+                  </div>
+                  <ul className="fidus-history-list">
+                    {fidusConversations.map((conv) => {
+                      const lastMsg = conv.messages[conv.messages.length - 1]
+                      const preview = lastMsg ? lastMsg.text.slice(0, 55) + (lastMsg.text.length > 55 ? '…' : '') : ''
+                      return (
+                        <li key={conv.id}>
+                          <button
+                            type="button"
+                            className={
+                              conv.id === activeFidusConvId
+                                ? 'fidus-conv-item active'
+                                : 'fidus-conv-item'
+                            }
+                            onClick={() => setActiveFidusConvId(conv.id)}
+                          >
+                            <span className="fidus-conv-title">{conv.title}</span>
+                            <span className="fidus-conv-preview">{preview}</span>
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </aside>
 
-              <form className="fidus-compose" onSubmit={handleSendFidusMessage}>
-                <label htmlFor="fidus-input">Message</label>
-                <div className="fidus-row">
-                  <input
-                    id="fidus-input"
-                    name="fidus-input"
-                    type="text"
-                    placeholder="Ask Fidus to help with your next step..."
-                    value={fidusInput}
-                    onChange={(event) => setFidusInput(event.target.value)}
-                  />
-                  <button className="primary-button" type="submit">
-                    Send
-                  </button>
+                {/* Chat Area */}
+                <div className="fidus-chat-area">
+                  <section className="fidus-thread" aria-label="Fidus conversation">
+                    {fidusMessages.map((message) => (
+                      <article
+                        key={message.id}
+                        className={message.role === 'user' ? 'fidus-bubble user' : 'fidus-bubble'}
+                      >
+                        <p className="fidus-role">{message.role === 'user' ? 'You' : 'Fidus'}</p>
+                        <p>{message.text}</p>
+                      </article>
+                    ))}
+                  </section>
+
+                  <form className="fidus-compose" onSubmit={handleSendFidusMessage}>
+                    <div className="fidus-row">
+                      <input
+                        id="fidus-input"
+                        name="fidus-input"
+                        type="text"
+                        placeholder="Ask Fidus anything..."
+                        value={fidusInput}
+                        onChange={(event) => setFidusInput(event.target.value)}
+                      />
+                      <button className="primary-button" type="submit">
+                        Send
+                      </button>
+                    </div>
+                  </form>
                 </div>
-              </form>
+              </div>
             </section>
           </div>
         </section>
@@ -1512,6 +1597,19 @@ function App() {
   }
 
   if (view === 'photo-album') {
+    const mockPhotos = [
+      { id: 'mp-1', name: 'Mountain Sunrise', date: 'Jan 12, 2026', tag: 'Nature', grad: 'linear-gradient(135deg,#7c3aed,#db2777)' },
+      { id: 'mp-2', name: 'Dev Setup', date: 'Feb 3, 2026', tag: 'Workspace', grad: 'linear-gradient(135deg,#0e7490,#7c3aed)' },
+      { id: 'mp-3', name: 'Night City', date: 'Feb 14, 2026', tag: 'Urban', grad: 'linear-gradient(135deg,#064e3b,#0e7490)' },
+      { id: 'mp-4', name: 'Project Wireframes', date: 'Mar 1, 2026', tag: 'Work', grad: 'linear-gradient(135deg,#9d174d,#7c3aed)' },
+      { id: 'mp-5', name: 'Team Call', date: 'Mar 5, 2026', tag: 'People', grad: 'linear-gradient(135deg,#1e3a5f,#9d174d)' },
+      { id: 'mp-6', name: 'Blueprint v2', date: 'Mar 8, 2026', tag: 'Work', grad: 'linear-gradient(135deg,#4c1d95,#1e40af)' },
+      { id: 'mp-7', name: 'Coastal Path', date: 'Mar 9, 2026', tag: 'Nature', grad: 'linear-gradient(135deg,#065f46,#0369a1)' },
+      { id: 'mp-8', name: 'Late Night Render', date: 'Mar 10, 2026', tag: 'Work', grad: 'linear-gradient(135deg,#3b0764,#db2777)' },
+    ]
+
+    const selectedMock = mockPhotos.find((p) => p.id === selectedMockPhotoId) ?? null
+
     return (
       <main className="layout">
         <section className="launcher-shell">
@@ -1522,39 +1620,48 @@ function App() {
               <header className="launcher-header">
                 <div>
                   <p className="kicker">Photo Album</p>
-                  <h1>Drive Image Viewer</h1>
-                  <p className="lead">Images tagged from Drive are listed here for easy viewing.</p>
-                </div>
-                <div className="header-actions">
-                  <button className="secondary-button" type="button" onClick={() => setView('drive')}>
-                    Back to Drive
-                  </button>
+                  <h1>Photos</h1>
+                  <p className="lead">{mockPhotos.length} photos &mdash; mock library preview.</p>
                 </div>
               </header>
 
-              <section className="album-grid">
-                {albumFiles.length === 0 && (
-                  <p className="device-caption">No image files in Drive yet. Upload images in Drive first.</p>
-                )}
-
-                {albumFiles.map((file) => (
+              <section className="album-photo-grid" aria-label="Photo library">
+                {mockPhotos.map((photo) => (
                   <button
-                    key={file.id}
-                    className={file.id === selectedPhotoFileId ? 'album-card active' : 'album-card'}
+                    key={photo.id}
                     type="button"
-                    onClick={() => setSelectedPhotoFileId(file.id)}
+                    className={
+                      photo.id === selectedMockPhotoId ? 'album-photo-card active' : 'album-photo-card'
+                    }
+                    onClick={() =>
+                      setSelectedMockPhotoId(photo.id === selectedMockPhotoId ? null : photo.id)
+                    }
                   >
-                    <span className="album-icon">IMG</span>
-                    <span>{file.name}</span>
+                    <div className="album-photo-thumb" style={{ background: photo.grad }}>
+                      <span className="album-photo-tag">{photo.tag}</span>
+                    </div>
+                    <div className="album-photo-meta">
+                      <span className="album-photo-name">{photo.name}</span>
+                      <span className="album-photo-date">{photo.date}</span>
+                    </div>
                   </button>
                 ))}
               </section>
 
-              {selectedPhotoFile && (
-                <section className="album-preview">
-                  <h3>Selected Asset</h3>
-                  <p>{selectedPhotoFile.name}</p>
-                  <p className="device-caption">Preview placeholder. Full media viewer can be added next.</p>
+              {selectedMock && (
+                <section className="album-full-preview">
+                  <div
+                    className="album-full-thumb"
+                    style={{ background: selectedMock.grad }}
+                    aria-label={selectedMock.name}
+                  >
+                    <span className="album-full-label">{selectedMock.name}</span>
+                  </div>
+                  <div className="album-full-info">
+                    <p className="album-full-name">{selectedMock.name}</p>
+                    <p className="album-full-date">{selectedMock.date} &middot; {selectedMock.tag}</p>
+                    <p className="device-caption">Full-resolution image loading will be available when photos are synced from Drive.</p>
+                  </div>
                 </section>
               )}
             </section>
