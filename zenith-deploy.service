@@ -1,0 +1,12 @@
+[Unit]
+Description=Zenith Auto-Deploy Service
+After=network.target
+
+[Service]
+Type=oneshot
+User=zenith
+WorkingDirectory=/home/zenith/Zenith-app
+ExecStart=/home/zenith/Zenith-app/deploy.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zenith-deploy

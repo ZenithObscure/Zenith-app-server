@@ -1,0 +1,20 @@
+[Unit]
+Description=Zenith Backend API
+After=network.target
+
+[Service]
+Type=simple
+User=zenith
+WorkingDirectory=/home/zenith/Zenith-app
+Environment="NODE_ENV=production"
+Environment="PORT=8787"
+EnvironmentFile=/home/zenith/Zenith-app/.env
+ExecStart=/usr/bin/npm run start:api
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zenith-backend
+
+[Install]
+WantedBy=multi-user.target
