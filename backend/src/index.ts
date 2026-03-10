@@ -236,6 +236,17 @@ const initSchema = () => {
       FOREIGN KEY(conversation_id) REFERENCES fidus_conversations(id) ON DELETE CASCADE,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS token_transactions (
+      id TEXT PRIMARY KEY,
+      from_user_id TEXT NOT NULL,
+      to_user_id TEXT NOT NULL,
+      amount REAL NOT NULL,
+      note TEXT,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY(from_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY(to_user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `)
 
   // Add new columns to drive_nodes if they don't exist
@@ -963,6 +974,88 @@ app.post('/api/conversations/:id/messages', requireAuth, (req: AuthRequest, res)
   }
 
   res.json({ ok: true })
+})
+
+app.get('/api/wallet', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const balance = readTokenBalance(userId)
+
+  const txRows = db.prepare(`
+    SELECT
+      t.id, t.from_user_id, t.to_user_id, t.amount, t.note, t.created_at,
+      uf.name AS from_name, ut.name AS to_name
+    FROM token_transactions t
+    JOIN users uf ON t.from_user_id = uf.id
+    JOIN users ut ON t.to_user_id = ut.id
+    WHERE t.from_user_id = ? OR t.to_user_id = ?
+    ORDER BY t.created_at DESC
+    LIMIT 50
+  `).all(userId, userId) as Array<{
+    id: string; from_user_id: string; to_user_id: string
+    amount: number; note: string | null; created_at: number
+    from_name: string; to_name: string
+  }>
+
+  const transactions = txRows.map((t) => ({
+    id: t.id,
+    direction: t.from_user_id === userId ? 'sent' : 'received',
+    amount: t.amount,
+    note: t.note ?? null,
+    createdAt: t.created_at,
+    counterpartName: t.from_user_id === userId ? t.to_name : t.from_name,
+  }))
+
+  res.json({ balance, transactions })
+})
+
+app.post('/api/wallet/send', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const { recipientEmail, amount, note } = req.body as {
+    recipientEmail?: unknown; amount?: unknown; note?: unknown
+  }
+
+  if (typeof recipientEmail !== 'string' || !recipientEmail.trim()) {
+    res.status(400).json({ error: 'recipientEmail is required' }); return
+  }
+  const parsedAmount = Number(amount)
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    res.status(400).json({ error: 'amount must be a positive number' }); return
+  }
+  if (parsedAmount > 100000) {
+    res.status(400).json({ error: 'amount exceeds maximum single transfer limit' }); return
+  }
+
+  const senderRow = db.prepare('SELECT name FROM users WHERE id = ?').get(userId) as { name: string } | undefined
+  const recipientRow = db.prepare('SELECT id, name FROM users WHERE email = ?').get(recipientEmail.trim().toLowerCase()) as
+    | { id: string; name: string } | undefined
+
+  if (!recipientRow) {
+    res.status(404).json({ error: 'no_account', message: 'No Zenith account found with that email address.' }); return
+  }
+  if (recipientRow.id === userId) {
+    res.status(400).json({ error: 'self_transfer', message: 'You cannot send tokens to yourself.' }); return
+  }
+
+  const senderBalance = readTokenBalance(userId)
+  const rounded = Number(parsedAmount.toFixed(2))
+  if (senderBalance < rounded) {
+    res.status(400).json({ error: 'insufficient_balance', message: `Insufficient balance. You have ${senderBalance.toFixed(2)} tokens.` }); return
+  }
+
+  const tx = db.transaction(() => {
+    updateTokenBalance(userId, Number((senderBalance - rounded).toFixed(2)))
+    updateTokenBalance(recipientRow.id, Number((readTokenBalance(recipientRow.id) + rounded).toFixed(2)))
+    db.prepare(
+      'INSERT INTO token_transactions (id, from_user_id, to_user_id, amount, note, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(`tx-${serial()}`, userId, recipientRow.id, rounded, typeof note === 'string' ? note.slice(0, 200) : null, Date.now())
+  })
+  tx()
+
+  res.json({
+    ok: true,
+    newBalance: Number((senderBalance - rounded).toFixed(2)),
+    message: `Sent ${rounded.toFixed(2)} tokens to ${recipientRow.name}.`,
+  })
 })
 
 app.get('/api/updates/latest', (_req, res) => {

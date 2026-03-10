@@ -836,6 +836,160 @@ body {
   margin-top: 0;
 }
 
+/* ─── Wallet ─────────────────────────────────────────────────────────────────── */
+.wallet-layout {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.section-title {
+  margin: 0 0 0.9rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.wallet-send-panel {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 1.1rem 1.2rem;
+}
+
+.wallet-send-form {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.wallet-field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.wallet-field label {
+  font-size: 0.78rem;
+  color: var(--label-ink);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.wallet-optional {
+  font-weight: 400;
+  color: var(--muted-ink);
+}
+
+.wallet-field input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--ink);
+  font-size: 0.9rem;
+  padding: 0.52rem 0.75rem;
+  font-family: inherit;
+  box-sizing: border-box;
+  transition: border-color 150ms ease;
+}
+
+.wallet-field input:focus {
+  outline: none;
+  border-color: var(--border-hover);
+}
+
+.wallet-send-panel .primary-button {
+  margin-top: 0.2rem;
+}
+
+.wallet-history-panel {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 1.1rem 1.2rem;
+}
+
+.wallet-empty {
+  color: var(--muted-ink);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.wallet-tx-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.wallet-tx-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.65rem 0.85rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.wallet-tx-item.received {
+  border-color: var(--online-border);
+  background: var(--online-bg);
+}
+
+.wallet-tx-left {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.wallet-tx-dir {
+  font-size: 0.72rem;
+  color: var(--muted-ink);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.wallet-tx-name {
+  font-size: 0.88rem;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.wallet-tx-note {
+  font-size: 0.78rem;
+  color: var(--muted-ink);
+  font-style: italic;
+}
+
+.wallet-tx-right {
+  display: grid;
+  gap: 0.15rem;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.wallet-tx-amount {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.wallet-tx-amount.sent {
+  color: var(--danger);
+}
+
+.wallet-tx-amount.received {
+  color: var(--online-color);
+}
+
+.wallet-tx-date {
+  font-size: 0.72rem;
+  color: var(--muted-ink);
+}
+
 /* ─── Photo Album ────────────────────────────────────────────────────────────── */
 .album-photo-grid {
   margin-top: 1rem;

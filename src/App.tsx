@@ -2,7 +2,7 @@ import './styles.css'
 import { ChangeEvent, FormEvent, ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type AuthMode = 'login' | 'signup'
-type ViewMode = 'auth' | 'launcher' | 'devices' | 'drive' | 'fidus' | 'photo-album' | 'hivemind' | 'storage' | 'engine'
+type ViewMode = 'auth' | 'launcher' | 'devices' | 'drive' | 'fidus' | 'photo-album' | 'hivemind' | 'storage' | 'engine' | 'wallet'
 type StatusKind = 'error' | 'success'
 type DeviceStatus = 'Online' | 'Offline'
 type DeviceType = 'Laptop' | 'Stationary' | 'Phone' | 'Other'
@@ -63,6 +63,15 @@ type HiveAssignment = {
   deviceName: string
   sharePercent: number
   tokenReward: number
+}
+
+type WalletTransaction = {
+  id: string
+  direction: 'sent' | 'received'
+  amount: number
+  note: string | null
+  createdAt: number
+  counterpartName: string
 }
 
 type ApiState = {
@@ -162,6 +171,16 @@ const appTiles: AppTile[] = [
       </svg>
     ),
   },
+  {
+    id: 'wallet',
+    name: 'Wallet',
+    description: 'View your token balance, send tokens to other Zenith users, and check transaction history.',
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M2 7a3 3 0 0 1 3-3h14a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V7Zm3-1a1 1 0 0 0-1 1v1h16V7a1 1 0 0 0-1-1H5Zm-1 4v6a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-6H4Zm11 2h3v2h-3v-2Z" />
+      </svg>
+    ),
+  },
 ]
 
 const starterDevices: DeviceInfo[] = [
@@ -218,6 +237,11 @@ function App() {
   const [status, setStatus] = useState('')
   const [statusKind, setStatusKind] = useState<StatusKind>('error')
   const [tokenBalance, setTokenBalance] = useState(0)
+  const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([])
+  const [walletRecipientEmail, setWalletRecipientEmail] = useState('')
+  const [walletAmount, setWalletAmount] = useState('')
+  const [walletNote, setWalletNote] = useState('')
+  const [walletSending, setWalletSending] = useState(false)
   const [accountName, setAccountName] = useState('Zenith User')
   const [accountEmail, setAccountEmail] = useState('not-set@zenith-app.net')
   const [devices, setDevices] = useState<DeviceInfo[]>(starterDevices)
@@ -360,12 +384,20 @@ function App() {
     })
   }, [apiFetch])
 
+  const loadWallet = useCallback(async (tokenOverride?: string) => {
+    const res = await apiFetch('/api/wallet', {}, tokenOverride)
+    if (!res.ok) return
+    const data = (await res.json()) as { balance: number; transactions: WalletTransaction[] }
+    setTokenBalance(data.balance)
+    setWalletTransactions(data.transactions)
+  }, [apiFetch])
+
   useEffect(() => {
     if (!authToken) {
       return
     }
 
-    Promise.all([loadApiState(), loadFidusConversations()])
+    Promise.all([loadApiState(), loadFidusConversations(), loadWallet()])
       .then(() => {
         setView('launcher')
       })
@@ -375,7 +407,7 @@ function App() {
         setStatusKind('error')
         setStatus('Session restore failed. Please log in again and ensure backend API is running.')
       })
-  }, [authToken, loadApiState, loadFidusConversations])
+  }, [authToken, loadApiState, loadFidusConversations, loadWallet])
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -422,7 +454,7 @@ function App() {
     const payload = (await response.json()) as AuthResponse
     persistAuthSession(payload)
     try {
-      await Promise.all([loadApiState(payload.token), loadFidusConversations(payload.token)])
+      await Promise.all([loadApiState(payload.token), loadFidusConversations(payload.token), loadWallet(payload.token)])
     } catch {
       // State will load on next render via useEffect
     }
@@ -490,7 +522,7 @@ function App() {
     const payload = (await response.json()) as AuthResponse
     persistAuthSession(payload)
     try {
-      await Promise.all([loadApiState(payload.token), loadFidusConversations(payload.token)])
+      await Promise.all([loadApiState(payload.token), loadFidusConversations(payload.token), loadWallet(payload.token)])
     } catch {
       // State will load on next render via useEffect
     }
@@ -1024,7 +1056,16 @@ function App() {
       </div>
       <h2>{accountName}</h2>
       <p className="sidebar-email">{accountEmail}</p>
-      <p className="token-balance">⬡ {tokenBalance.toFixed(2)} Tokens</p>
+  <p
+        className="token-balance"
+        style={{ cursor: 'pointer' }}
+        role="button"
+        tabIndex={0}
+        onClick={() => setView('wallet')}
+        onKeyDown={(e) => e.key === 'Enter' && setView('wallet')}
+        title="Open Wallet"
+      >⬡ {tokenBalance.toFixed(2)} Tokens
+      </p>
       <div className="hive-quick-toggle">
         <span>HiveMind</span>
         <button
@@ -2053,6 +2094,149 @@ function App() {
     )
   }
 
+  if (view === 'wallet') {
+    const handleSendTokens = async (e: FormEvent<HTMLFormElement>) => {
+      e.preventDefault()
+      const amount = parseFloat(walletAmount)
+      if (!walletRecipientEmail.trim() || !Number.isFinite(amount) || amount <= 0) {
+        setStatusKind('error')
+        setStatus('Please enter a valid recipient email and amount.')
+        return
+      }
+      setWalletSending(true)
+      try {
+        const res = await apiFetch('/api/wallet/send', {
+          method: 'POST',
+          body: JSON.stringify({
+            recipientEmail: walletRecipientEmail.trim(),
+            amount,
+            note: walletNote.trim() || undefined,
+          }),
+        })
+        const data = (await res.json()) as { ok?: boolean; message?: string; newBalance?: number; error?: string }
+        if (!res.ok) {
+          setStatusKind('error')
+          setStatus(data.message ?? data.error ?? 'Transfer failed.')
+        } else {
+          setTokenBalance(data.newBalance ?? tokenBalance)
+          setWalletAmount('')
+          setWalletRecipientEmail('')
+          setWalletNote('')
+          setStatusKind('success')
+          setStatus(data.message ?? 'Tokens sent!')
+          // Reload transaction history
+          loadWallet().catch(() => {})
+        }
+      } finally {
+        setWalletSending(false)
+      }
+    }
+
+    const formatDate = (ts: number) =>
+      new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+
+    return (
+      <main className="layout">
+        <section className="launcher-shell">
+          <div className="launcher-layout">
+            {renderSidebar()}
+            <section className="launcher-main">
+              <header className="launcher-header">
+                <div>
+                  <p className="kicker">Token Wallet</p>
+                  <h1>⬡ {tokenBalance.toFixed(2)} Tokens</h1>
+                  <p className="lead">Send tokens to other Zenith users and track your transaction history.</p>
+                </div>
+              </header>
+
+              <div className="wallet-layout">
+                <section className="wallet-send-panel">
+                  <h2 className="section-title">Send Tokens</h2>
+                  <form onSubmit={handleSendTokens} className="wallet-send-form">
+                    <div className="wallet-field">
+                      <label htmlFor="wallet-recipient">Recipient Email</label>
+                      <input
+                        id="wallet-recipient"
+                        type="email"
+                        placeholder="user@example.com"
+                        value={walletRecipientEmail}
+                        onChange={(e) => setWalletRecipientEmail(e.target.value)}
+                        autoComplete="off"
+                      />
+                    </div>
+                    <div className="wallet-field">
+                      <label htmlFor="wallet-amount">Amount</label>
+                      <input
+                        id="wallet-amount"
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={walletAmount}
+                        onChange={(e) => setWalletAmount(e.target.value)}
+                      />
+                    </div>
+                    <div className="wallet-field">
+                      <label htmlFor="wallet-note">Note <span className="wallet-optional">(optional)</span></label>
+                      <input
+                        id="wallet-note"
+                        type="text"
+                        placeholder="What's this for?"
+                        maxLength={200}
+                        value={walletNote}
+                        onChange={(e) => setWalletNote(e.target.value)}
+                      />
+                    </div>
+                    <button
+                      className="primary-button"
+                      type="submit"
+                      disabled={walletSending}
+                    >
+                      {walletSending ? 'Sending…' : 'Send Tokens'}
+                    </button>
+                  </form>
+
+                  {status && (
+                    <p className={statusKind === 'success' ? 'status-message success' : 'status-message'}>
+                      {status}
+                    </p>
+                  )}
+                </section>
+
+                <section className="wallet-history-panel">
+                  <h2 className="section-title">Transaction History</h2>
+                  {walletTransactions.length === 0 ? (
+                    <p className="wallet-empty">No transactions yet. Send tokens to get started.</p>
+                  ) : (
+                    <ul className="wallet-tx-list">
+                      {walletTransactions.map((tx) => (
+                        <li key={tx.id} className={`wallet-tx-item ${tx.direction}`}>
+                          <div className="wallet-tx-left">
+                            <span className="wallet-tx-dir">
+                              {tx.direction === 'sent' ? '↑ Sent to' : '↓ Received from'}
+                            </span>
+                            <span className="wallet-tx-name">{tx.counterpartName}</span>
+                            {tx.note && <span className="wallet-tx-note">"{tx.note}"</span>}
+                          </div>
+                          <div className="wallet-tx-right">
+                            <span className={`wallet-tx-amount ${tx.direction}`}>
+                              {tx.direction === 'sent' ? '−' : '+'}{tx.amount.toFixed(2)} ⬡
+                            </span>
+                            <span className="wallet-tx-date">{formatDate(tx.createdAt)}</span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    )
+  }
+
   if (view === 'launcher') {
     return (
       <main className="layout">
@@ -2115,6 +2299,12 @@ function App() {
                       if (app.id === 'engine-layout') {
                         setStatus('')
                         setView('engine')
+                        return
+                      }
+
+                      if (app.id === 'wallet') {
+                        setStatus('')
+                        setView('wallet')
                         return
                       }
 
