@@ -4,6 +4,7 @@ import Database from 'better-sqlite3'
 import express, { NextFunction, Request, Response } from 'express'
 import helmet from 'helmet'
 import jwt from 'jsonwebtoken'
+import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
@@ -734,6 +735,16 @@ app.get('/api/updates/latest', (_req, res) => {
     releasesUrl: 'https://github.com/ZenithObscure/Zenith-app/releases',
     notes: 'Use this endpoint in Electron updater checks and compare with app version.',
   })
+})
+
+// Serve frontend static files in production
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const distPath = path.resolve(__dirname, '../../dist')
+app.use(express.static(distPath))
+
+// Client-side routing fallback: serve index.html for non-API routes
+app.get(/^(?!\/api).*/, (_req, res) => {
+  res.sendFile(path.join(distPath, 'index.html'))
 })
 
 // Global error handler
