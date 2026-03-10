@@ -381,7 +381,11 @@ function App() {
 
     const payload = (await response.json()) as AuthResponse
     persistAuthSession(payload)
-    await loadApiState(payload.token)
+    try {
+      await loadApiState(payload.token)
+    } catch {
+      // State will load on next render via useEffect
+    }
     setStatusKind('success')
     setStatus('Welcome back. Opening your Zenith app launcher...')
     setView('launcher')
@@ -431,7 +435,11 @@ function App() {
 
     const payload = (await response.json()) as AuthResponse
     persistAuthSession(payload)
-    await loadApiState(payload.token)
+    try {
+      await loadApiState(payload.token)
+    } catch {
+      // State will load on next render via useEffect
+    }
     setStatusKind('success')
     setStatus('Account created. Opening your Zenith app launcher...')
     setView('launcher')
