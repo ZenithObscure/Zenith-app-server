@@ -127,7 +127,7 @@ const signupSchema = z.object({
 })
 
 const loginSchema = z.object({
-  email: z.email(),
+  username: z.string().min(2).max(32),
   password: z.string().min(8),
 })
 
@@ -658,13 +658,13 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     return
   }
 
-  const email = parsed.data.email.toLowerCase()
+  const username = parsed.data.username.toLowerCase()
   const user = db
-    .prepare('SELECT id, name, username, email, password, role FROM users WHERE email = ?')
-    .get(email) as UserAccount | undefined
+    .prepare('SELECT id, name, username, email, password, role FROM users WHERE LOWER(username) = ?')
+    .get(username) as UserAccount | undefined
 
   if (!user) {
-    res.status(401).json({ error: 'no_account', message: 'No account found with this email. Check for typos or sign up for a new account.' })
+    res.status(401).json({ error: 'no_account', message: 'No account found with that username. Check for typos or sign up for a new account.' })
     return
   }
 
@@ -1060,35 +1060,8 @@ app.post('/api/hivemind/dispatch', requireAuth, async (req: AuthRequest, res) =>
 
   tx()
 
-  // Call AI with the query and return the generated answer
-  let answer = ''
-  const apiKey = process.env.OPENAI_API_KEY
-  if (apiKey) {
-    try {
-      const { default: OpenAI } = await import('openai')
-      const openai = new OpenAI({ apiKey })
-      const completion = await openai.chat.completions.create({
-        model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You are Fidus, the Zenith AI. You are answering a query distributed across the HiveMind compute network. ' +
-              'Be concise and technically precise.',
-          },
-          { role: 'user', content: parsed.data.query },
-        ],
-        max_tokens: 800,
-        temperature: 0.7,
-      })
-      answer = completion.choices[0]?.message?.content ?? ''
-    } catch {
-      answer = ''
-    }
-  }
-  if (!answer) {
-    answer = buildFallbackResponse(parsed.data.query)
-  }
+  // Generate AI answer using local fallback
+  const answer = buildFallbackResponse(parsed.data.query)
 
   res.json({ assignments, totalReward, tokenBalance: nextTokenBalance, answer })
 })
@@ -1571,64 +1544,21 @@ app.post('/api/fidus/chat', requireAuth, async (req: AuthRequest, res) => {
     'Help the user with their Zenith workspace, code, planning, and any other questions.' +
     memoryBlock
 
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    // Fallback: smart canned response (no API key configured)
-    const userText = messages.at(-1)?.text ?? ''
-    const fallback = buildFallbackResponse(userText)
-    // Stream it word by word for a nice effect
-    const words = fallback.split(' ')
-    for (let i = 0; i < words.length; i++) {
-      sendChunk((i === 0 ? '' : ' ') + words[i])
-      await new Promise<void>((r) => setTimeout(r, 30))
-    }
-    sendDone(fallback)
-    return
+  // Stream local fallback response word by word
+  const userText = messages.at(-1)?.text ?? ''
+  const fallback = buildFallbackResponse(userText)
+  const words = fallback.split(' ')
+  for (let i = 0; i < words.length; i++) {
+    sendChunk((i === 0 ? '' : ' ') + words[i])
+    await new Promise<void>((r) => setTimeout(r, 30))
   }
-
-  // Call OpenAI
-  try {
-    const { default: OpenAI } = await import('openai')
-    const openai = new OpenAI({ apiKey })
-
-    // Convert our message format to OpenAI format
-    const oaiMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
-      { role: 'system', content: systemPrompt },
-    ]
-    for (const m of messages) {
-      if (m.role === 'user') oaiMessages.push({ role: 'user', content: m.text })
-      else if (m.role === 'fidus' || m.role === 'assistant') oaiMessages.push({ role: 'assistant', content: m.text })
-    }
-
-    const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini'
-    const stream = await openai.chat.completions.create({
-      model,
-      messages: oaiMessages,
-      stream: true,
-      max_tokens: 1024,
-      temperature: 0.7,
-    })
-
-    let fullText = ''
-    for await (const part of stream) {
-      const chunk = part.choices[0]?.delta?.content ?? ''
-      if (chunk) {
-        fullText += chunk
-        sendChunk(chunk)
-      }
-    }
-    sendDone(fullText)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'OpenAI error'
-    res.write(`data: ${JSON.stringify({ chunk: '', done: true, fullText: `Sorry, I ran into an error: ${msg}` })}\n\n`)
-    res.end()
-  }
+  sendDone(fallback)
 })
 
 function buildFallbackResponse(userText: string): string {
   const t = userText.toLowerCase()
   if (t.includes('hello') || t.includes('hi') || t.includes('hey')) {
-    return "Hello! I'm Fidus, your Zenith AI assistant. I'm running in offline mode right now — connect an OpenAI API key in your backend `.env` to enable full AI responses. How can I help you today?"
+    return "Hello! I'm Fidus, your Zenith AI assistant. How can I help you today?"
   }
   if (t.includes('drive') || t.includes('file') || t.includes('upload')) {
     return 'Zenith Drive supports folders, file uploads (up to 50 MB each), and image previews. You can create folders, upload files, rename, and download directly from the Drive view.'
@@ -1639,13 +1569,13 @@ function buildFallbackResponse(userText: string): string {
   if (t.includes('token') || t.includes('wallet')) {
     return 'Zenith Tokens power the HiveMind compute network. You can send tokens to other users from the Wallet view, and earn them by contributing compute through HiveMind.'
   }
-  if (t.includes('openai') || t.includes('api key') || t.includes('model') || t.includes('gpt')) {
-    return 'To enable full AI responses, set `OPENAI_API_KEY` in your backend `.env` file and restart the server. I support any OpenAI-compatible model — set `OPENAI_MODEL` to override the default (`gpt-4o-mini`).'
-  }
   if (t.includes('hive') || t.includes('compute') || t.includes('ai task')) {
     return 'HiveMind distributes AI tasks across your registered devices, weighted by their compute profile. You can toggle HiveMind on/off and adjust contribution percentages per device in the HiveMind view.'
   }
-  return `You asked: "${userText.slice(0, 80)}". I'm running in offline mode — add an OpenAI API key to your backend to get real AI responses. I can still help you navigate Zenith!`
+  if (t.includes('username') || t.includes('wallet address') || t.includes('send')) {
+    return 'Your username is your Zenith wallet address. Use it to send and receive Zenith Tokens from other users — just enter their username in the Wallet send form.'
+  }
+  return `I heard you — you said: "${userText.slice(0, 80)}". I'm here to help you navigate Zenith. Try asking about Drive, Devices, HiveMind, or your Wallet!`
 }
 
 // ── Admin endpoints ──────────────────────────────────────────────────────────

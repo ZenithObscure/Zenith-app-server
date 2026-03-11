@@ -309,7 +309,7 @@ function App() {
   )
   const [view, setView] = useState<ViewMode>('auth')
   const [mode, setMode] = useState<AuthMode>('login')
-  const [loginEmail, setLoginEmail] = useState('')
+  const [loginUsername, setLoginUsername] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
   const [signupUsername, setSignupUsername] = useState('')
   const [signupEmail, setSignupEmail] = useState('')
@@ -700,9 +700,9 @@ function App() {
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
-    if (!isEmailValid(loginEmail)) {
+    if (loginUsername.trim().length < 2) {
       setStatusKind('error')
-      setStatus('Please enter a valid email address for login.')
+      setStatus('Please enter your username.')
       return
     }
 
@@ -716,7 +716,7 @@ function App() {
     try {
       response = await apiFetch('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+        body: JSON.stringify({ username: loginUsername.trim(), password: loginPassword }),
       })
     } catch {
       setStatusKind('error')
@@ -728,7 +728,7 @@ function App() {
       const body = await response.json().catch(() => null) as { error?: string; message?: string } | null
       setStatusKind('error')
       if (body?.error === 'no_account') {
-        setStatus(body.message ?? 'No account found with this email.')
+        setStatus(body.message ?? 'No account found with that username.')
       } else if (body?.error === 'wrong_password') {
         setStatus(body.message ?? 'Incorrect password.')
       } else if (body?.error === 'rate_limited') {
@@ -1001,7 +1001,7 @@ function App() {
     setFidusMemories([])
     setView('auth')
     setMode('login')
-    setLoginEmail('')
+    setLoginUsername('')
     setLoginPassword('')
     setStatusKind('success')
     setStatus('Logged out. See you soon!')
@@ -3692,15 +3692,15 @@ function App() {
 
           {mode === 'login' ? (
             <form className="auth-form" onSubmit={handleLogin}>
-              <label htmlFor="login-email">Email</label>
+              <label htmlFor="login-username">Username</label>
               <input
-                id="login-email"
-                name="login-email"
-                type="email"
-                autoComplete="email"
-                placeholder="you@example.com"
-                value={loginEmail}
-                onChange={(event) => setLoginEmail(event.target.value)}
+                id="login-username"
+                name="login-username"
+                type="text"
+                autoComplete="username"
+                placeholder="zenith_user"
+                value={loginUsername}
+                onChange={(event) => setLoginUsername(event.target.value)}
               />
 
               <label htmlFor="login-password">Password</label>
