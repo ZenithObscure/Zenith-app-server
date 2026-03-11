@@ -334,15 +334,22 @@ function App() {
     const el = fidusThreadRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [fidusConversations, view])
+
+  // Electron auto-update listeners
+  useEffect(() => {
+    if (!window.electronAPI) return
+    window.electronAPI.onUpdateAvailable((version) => setUpdateVersion(version))
+    window.electronAPI.onUpdateDownloaded(() => setUpdateDownloaded(true))
+    return () => window.electronAPI?.removeAllListeners()
+  }, [])
   const [selectedEngineModel, setSelectedEngineModel] = useState<string>('standard')
   const [engineResourcePercent, setEngineResourcePercent] = useState(50)
   const [hiveSettingsLocked, setHiveSettingsLocked] = useState(false)
   const [driveFileMenuId, setDriveFileMenuId] = useState<string | null>(null)
 
-  const isWebRuntime = useMemo(() => {
-    const ua = typeof navigator !== 'undefined' ? navigator.userAgent.toLowerCase() : ''
-    return !ua.includes('electron')
-  }, [])
+  const isWebRuntime = useMemo(() => !window.electronAPI?.isElectron, [])
+  const [updateDownloaded, setUpdateDownloaded] = useState(false)
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
 
   const isEmailValid = (email: string) => /\S+@\S+\.\S+/.test(email)
 
@@ -1321,6 +1328,22 @@ function App() {
               ))}
             </ul>
           )}
+        </div>
+      )}
+
+      {/* Electron update banner — shown when a new version has been downloaded */}
+      {updateDownloaded && (
+        <div className="electron-update-banner" role="status">
+          <span className="electron-update-text">
+            {updateVersion ? `Update v${updateVersion} ready` : 'Update ready'} — restart to apply
+          </span>
+          <button
+            type="button"
+            className="mini-button"
+            onClick={() => window.electronAPI?.installUpdate()}
+          >
+            Restart &amp; Update
+          </button>
         </div>
       )}
     </aside>
@@ -2413,7 +2436,8 @@ function App() {
                     type="button"
                     className="mini-button"
                     onClick={() => {
-                      window.open(releasesUrl, '_blank')
+                      if (window.electronAPI) window.electronAPI.openExternal(releasesUrl)
+                      else window.open(releasesUrl, '_blank')
                     }}
                   >
                     View release notes
@@ -2438,7 +2462,10 @@ function App() {
                       type="button"
                       className="primary-button"
                       style={{ width: '100%' }}
-                      onClick={() => window.open(releasesUrl, '_blank')}
+                      onClick={() => {
+                        if (window.electronAPI) window.electronAPI.openExternal(releasesUrl)
+                        else window.open(releasesUrl, '_blank')
+                      }}
                     >
                       Download {p.ext}
                     </button>
@@ -2474,7 +2501,10 @@ function App() {
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => window.open(releasesUrl, '_blank')}
+                  onClick={() => {
+                    if (window.electronAPI) window.electronAPI.openExternal(releasesUrl)
+                    else window.open(releasesUrl, '_blank')
+                  }}
                 >
                   View all releases →
                 </button>

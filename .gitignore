@@ -18,6 +18,8 @@ dist-ssr
 *.local
 backend/data/*.db
 backend/data/*.db-*
+electron-out/
+electron-dist/
 
 # Editor directories and files
 .vscode/*

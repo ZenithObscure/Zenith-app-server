@@ -1,0 +1,86 @@
+appId: net.zenith-app.desktop
+productName: Zenith
+copyright: Copyright © 2025 Zenith
+
+# electron-builder reads main entry from extraMetadata so we only package
+# electron-updater as a runtime dep — not the backend's native modules.
+extraMetadata:
+  main: electron-out/main.js
+  dependencies:
+    electron-updater: "^6.3.0"
+
+# Skip native module rebuilding (better-sqlite3 stays server-side)
+npmRebuild: false
+
+publish:
+  - provider: github
+    owner: ZenithObscure
+    repo: Zenith-app-server
+
+directories:
+  output: electron-dist
+  buildResources: electron/resources
+
+# ── What goes into the package ──────────────────────────────────────────────
+files:
+  - dist/**
+  - electron-out/**
+  - "!node_modules/**"
+  - node_modules/electron-updater/**
+  - node_modules/builder-util-runtime/**
+  - node_modules/fs-extra/**
+  - node_modules/graceful-fs/**
+  - node_modules/jsonfile/**
+  - node_modules/universalify/**
+  - node_modules/semver/**
+  - node_modules/js-yaml/**
+  - node_modules/argparse/**
+  - node_modules/lazy-val/**
+  - node_modules/lodash.isequal/**
+  - node_modules/lodash.isarray/**
+
+# Extra files copied into <resources>/ inside the packaged app
+extraResources:
+  - from: electron/resources
+    to: .
+
+# ── Platform targets ─────────────────────────────────────────────────────────
+win:
+  target:
+    - target: nsis
+      arch: [x64, ia32]
+  icon: electron/resources/icon.ico
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  icon: electron/resources/icon.icns
+  category: public.app-category.productivity
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  icon: electron/resources/icon.png
+  category: Office
+
+# ── Installer options ─────────────────────────────────────────────────────────
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  installerIcon: electron/resources/icon.ico
+  uninstallerIcon: electron/resources/icon.ico
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
