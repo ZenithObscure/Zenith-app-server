@@ -9,6 +9,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   getVersion: (): Promise<string> => ipcRenderer.invoke('get-app-version'),
 
+  getDeviceId: (): Promise<string> => ipcRenderer.invoke('get-device-id'),
+
+  getSystemStats: (): Promise<{
+    deviceId: string
+    hostname: string
+    platform: string
+    cpuModel: string
+    cpuCores: number
+    cpuPercent: number
+    ramUsedGb: number
+    ramTotalGb: number
+    diskUsedGb: number
+    diskTotalGb: number
+  }> => ipcRenderer.invoke('get-system-stats'),
+
   openExternal: (url: string): Promise<void> =>
     ipcRenderer.invoke('open-external', url),
 

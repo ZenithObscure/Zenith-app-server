@@ -24,6 +24,17 @@ type DeviceInfo = {
   role: DeviceRole
   computeProfile: ComputeProfile
   storageContributionGb: number
+  electronDeviceId?: string
+  hostname?: string
+  platform?: string
+  cpuModel?: string
+  cpuCores?: number
+  cpuPercent?: number
+  ramUsedGb?: number
+  ramTotalGb?: number
+  diskUsedGb?: number
+  diskTotalGb?: number
+  lastStatsAt?: number
 }
 
 type DriveNode = {
@@ -285,6 +296,23 @@ const initSchema = () => {
     try { db.exec(`ALTER TABLE drive_nodes ${col}`) } catch { /* already exists */ }
   }
 
+  // Add system stats columns to devices for Electron heartbeat
+  for (const col of [
+    'ADD COLUMN electron_device_id TEXT',
+    'ADD COLUMN hostname TEXT',
+    'ADD COLUMN platform TEXT',
+    'ADD COLUMN cpu_model TEXT',
+    'ADD COLUMN cpu_cores INTEGER',
+    'ADD COLUMN cpu_percent REAL',
+    'ADD COLUMN ram_used_gb REAL',
+    'ADD COLUMN ram_total_gb REAL',
+    'ADD COLUMN disk_used_gb REAL',
+    'ADD COLUMN disk_total_gb REAL',
+    'ADD COLUMN last_stats_at INTEGER',
+  ]) {
+    try { db.exec(`ALTER TABLE devices ${col}`) } catch { /* already exists */ }
+  }
+
   // Add user_id columns to existing tables if they don't have them
   try {
     db.prepare('SELECT user_id FROM devices LIMIT 1').get()
@@ -409,7 +437,9 @@ seedDefaults()
 
 const readDevices = (userId: string): DeviceInfo[] => {
   const rows = db.prepare(`
-    SELECT id, name, type, status, role, compute_profile, storage_contribution_gb
+    SELECT id, name, type, status, role, compute_profile, storage_contribution_gb,
+           electron_device_id, hostname, platform, cpu_model, cpu_cores,
+           cpu_percent, ram_used_gb, ram_total_gb, disk_used_gb, disk_total_gb, last_stats_at
     FROM devices
     WHERE user_id = ?
     ORDER BY name ASC
@@ -421,6 +451,17 @@ const readDevices = (userId: string): DeviceInfo[] => {
     role: DeviceRole
     compute_profile: ComputeProfile
     storage_contribution_gb: number
+    electron_device_id: string | null
+    hostname: string | null
+    platform: string | null
+    cpu_model: string | null
+    cpu_cores: number | null
+    cpu_percent: number | null
+    ram_used_gb: number | null
+    ram_total_gb: number | null
+    disk_used_gb: number | null
+    disk_total_gb: number | null
+    last_stats_at: number | null
   }>
 
   return rows.map((row) => ({
@@ -431,6 +472,17 @@ const readDevices = (userId: string): DeviceInfo[] => {
     role: row.role,
     computeProfile: row.compute_profile,
     storageContributionGb: row.storage_contribution_gb,
+    electronDeviceId: row.electron_device_id ?? undefined,
+    hostname: row.hostname ?? undefined,
+    platform: row.platform ?? undefined,
+    cpuModel: row.cpu_model ?? undefined,
+    cpuCores: row.cpu_cores ?? undefined,
+    cpuPercent: row.cpu_percent ?? undefined,
+    ramUsedGb: row.ram_used_gb ?? undefined,
+    ramTotalGb: row.ram_total_gb ?? undefined,
+    diskUsedGb: row.disk_used_gb ?? undefined,
+    diskTotalGb: row.disk_total_gb ?? undefined,
+    lastStatsAt: row.last_stats_at ?? undefined,
   }))
 }
 
@@ -1228,7 +1280,97 @@ app.post('/api/devices/:id/ping', requireAuth, (req: AuthRequest, res) => {
 
   // Mark online
   db.prepare("UPDATE devices SET status = 'Online' WHERE id = ? AND user_id = ?").run(req.params.id, userId)
+
+  // Store system stats if provided by Electron heartbeat
+  const {
+    hostname, platform, cpuModel, cpuCores,
+    cpuPercent, ramUsedGb, ramTotalGb, diskUsedGb, diskTotalGb,
+    electronDeviceId,
+  } = req.body as {
+    hostname?: unknown; platform?: unknown; cpuModel?: unknown; cpuCores?: unknown
+    cpuPercent?: unknown; ramUsedGb?: unknown; ramTotalGb?: unknown
+    diskUsedGb?: unknown; diskTotalGb?: unknown; electronDeviceId?: unknown
+  }
+
+  const hasStats = typeof cpuPercent === 'number' && typeof ramUsedGb === 'number'
+  if (hasStats) {
+    db.prepare(`
+      UPDATE devices SET
+        hostname = ?, platform = ?, cpu_model = ?, cpu_cores = ?,
+        cpu_percent = ?, ram_used_gb = ?, ram_total_gb = ?,
+        disk_used_gb = ?, disk_total_gb = ?, last_stats_at = ?,
+        electron_device_id = COALESCE(?, electron_device_id)
+      WHERE id = ? AND user_id = ?
+    `).run(
+      typeof hostname === 'string' ? hostname : null,
+      typeof platform === 'string' ? platform : null,
+      typeof cpuModel === 'string' ? cpuModel : null,
+      typeof cpuCores === 'number' ? cpuCores : null,
+      cpuPercent,
+      ramUsedGb,
+      typeof ramTotalGb === 'number' ? ramTotalGb : null,
+      typeof diskUsedGb === 'number' ? diskUsedGb : null,
+      typeof diskTotalGb === 'number' ? diskTotalGb : null,
+      now,
+      typeof electronDeviceId === 'string' ? electronDeviceId : null,
+      req.params.id, userId,
+    )
+  }
+
   res.json({ ok: true, lastPing: now })
+})
+
+// Register or find the Electron device for this machine
+app.post('/api/devices/register-electron', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const {
+    electronDeviceId, hostname, platform, cpuModel, cpuCores, storageContributionGb,
+  } = req.body as {
+    electronDeviceId?: unknown; hostname?: unknown; platform?: unknown
+    cpuModel?: unknown; cpuCores?: unknown; storageContributionGb?: unknown
+  }
+
+  if (typeof electronDeviceId !== 'string' || !electronDeviceId.trim()) {
+    res.status(400).json({ error: 'electronDeviceId required' }); return
+  }
+
+  // Check if a device with this electronDeviceId already exists
+  const existing = db.prepare(
+    'SELECT id FROM devices WHERE electron_device_id = ? AND user_id = ?',
+  ).get(electronDeviceId, userId) as { id: string } | undefined
+
+  if (existing) {
+    res.json({ deviceId: existing.id, created: false })
+    return
+  }
+
+  // Create a new device for this machine
+  const deviceName = typeof hostname === 'string' && hostname.trim()
+    ? hostname.trim()
+    : `Desktop ${Math.floor(Math.random() * 900) + 100}`
+
+  const deviceId = `device-${serial()}`
+  const storageGb = typeof storageContributionGb === 'number' && storageContributionGb > 0
+    ? Math.min(Math.round(storageContributionGb), 10000)
+    : 100
+
+  db.prepare(`
+    INSERT INTO devices
+      (id, user_id, name, type, status, role, compute_profile, storage_contribution_gb,
+       electron_device_id, hostname, platform, cpu_model, cpu_cores)
+    VALUES (?, ?, ?, 'Stationary', 'Online', 'Worker', 'Balanced Worker', ?, ?, ?, ?, ?, ?)
+  `).run(
+    deviceId, userId,
+    deviceName.slice(0, 60),
+    storageGb,
+    electronDeviceId,
+    typeof hostname === 'string' ? hostname.slice(0, 120) : null,
+    typeof platform === 'string' ? platform : null,
+    typeof cpuModel === 'string' ? cpuModel.slice(0, 120) : null,
+    typeof cpuCores === 'number' ? cpuCores : null,
+  )
+
+  res.status(201).json({ deviceId, created: true })
 })
 
 // Sweep stale devices (>5 min since last ping → Offline)
@@ -1278,6 +1420,124 @@ app.delete('/api/fidus/memories/:id', requireAuth, (req: AuthRequest, res) => {
   db.prepare('DELETE FROM fidus_memories WHERE id = ? AND user_id = ?').run(req.params.id, userId)
   res.json({ ok: true })
 })
+
+// ── Fidus AI Chat (SSE streaming) ─────────────────────────────────────────────
+app.post('/api/fidus/chat', requireAuth, async (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const { conversationId, messages } = req.body as {
+    conversationId?: unknown
+    messages?: Array<{ role: string; text: string }>
+  }
+
+  if (typeof conversationId !== 'string' || !conversationId.trim()) {
+    res.status(400).json({ error: 'conversationId required' }); return
+  }
+  if (!Array.isArray(messages) || messages.length === 0) {
+    res.status(400).json({ error: 'messages array required' }); return
+  }
+
+  // Verify the conversation belongs to this user
+  const conv = db.prepare(
+    'SELECT id FROM fidus_conversations WHERE id = ? AND user_id = ?',
+  ).get(conversationId, userId)
+  if (!conv) { res.status(404).json({ error: 'Conversation not found' }); return }
+
+  // Set up SSE headers
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('X-Accel-Buffering', 'no') // nginx: disable buffering
+  res.flushHeaders()
+
+  const sendChunk = (chunk: string) => {
+    res.write(`data: ${JSON.stringify({ chunk, done: false })}\n\n`)
+  }
+  const sendDone = (fullText: string) => {
+    res.write(`data: ${JSON.stringify({ chunk: '', done: true, fullText })}\n\n`)
+    res.end()
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    // Fallback: smart canned response (no API key configured)
+    const userText = messages.at(-1)?.text ?? ''
+    const fallback = buildFallbackResponse(userText)
+    // Stream it word by word for a nice effect
+    const words = fallback.split(' ')
+    for (let i = 0; i < words.length; i++) {
+      sendChunk((i === 0 ? '' : ' ') + words[i])
+      await new Promise<void>((r) => setTimeout(r, 30))
+    }
+    sendDone(fallback)
+    return
+  }
+
+  // Call OpenAI
+  try {
+    const { default: OpenAI } = await import('openai')
+    const openai = new OpenAI({ apiKey })
+
+    // Convert our message format to OpenAI format
+    const oaiMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
+      {
+        role: 'system',
+        content:
+          'You are Fidus, a helpful AI assistant built into the Zenith desktop platform. ' +
+          'You are concise, technically sharp, and friendly. ' +
+          'Help the user with their Zenith workspace, code, planning, and any other questions.',
+      },
+    ]
+    for (const m of messages) {
+      if (m.role === 'user') oaiMessages.push({ role: 'user', content: m.text })
+      else if (m.role === 'fidus' || m.role === 'assistant') oaiMessages.push({ role: 'assistant', content: m.text })
+    }
+
+    const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini'
+    const stream = await openai.chat.completions.create({
+      model,
+      messages: oaiMessages,
+      stream: true,
+      max_tokens: 1024,
+      temperature: 0.7,
+    })
+
+    let fullText = ''
+    for await (const part of stream) {
+      const chunk = part.choices[0]?.delta?.content ?? ''
+      if (chunk) {
+        fullText += chunk
+        sendChunk(chunk)
+      }
+    }
+    sendDone(fullText)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'OpenAI error'
+    res.write(`data: ${JSON.stringify({ chunk: '', done: true, fullText: `Sorry, I ran into an error: ${msg}` })}\n\n`)
+    res.end()
+  }
+})
+
+function buildFallbackResponse(userText: string): string {
+  const t = userText.toLowerCase()
+  if (t.includes('hello') || t.includes('hi') || t.includes('hey')) {
+    return "Hello! I'm Fidus, your Zenith AI assistant. I'm running in offline mode right now — connect an OpenAI API key in your backend `.env` to enable full AI responses. How can I help you today?"
+  }
+  if (t.includes('drive') || t.includes('file') || t.includes('upload')) {
+    return 'Zenith Drive supports folders, file uploads (up to 50 MB each), and image previews. You can create folders, upload files, rename, and download directly from the Drive view.'
+  }
+  if (t.includes('device') || t.includes('computer') || t.includes('laptop')) {
+    return 'The Devices view shows all machines registered to your Zenith account. When running the Zenith desktop app, your machine reports live CPU, RAM, and disk stats every 30 seconds.'
+  }
+  if (t.includes('token') || t.includes('wallet')) {
+    return 'Zenith Tokens power the HiveMind compute network. You can send tokens to other users from the Wallet view, and earn them by contributing compute through HiveMind.'
+  }
+  if (t.includes('openai') || t.includes('api key') || t.includes('model') || t.includes('gpt')) {
+    return 'To enable full AI responses, set `OPENAI_API_KEY` in your backend `.env` file and restart the server. I support any OpenAI-compatible model — set `OPENAI_MODEL` to override the default (`gpt-4o-mini`).'
+  }
+  if (t.includes('hive') || t.includes('compute') || t.includes('ai task')) {
+    return 'HiveMind distributes AI tasks across your registered devices, weighted by their compute profile. You can toggle HiveMind on/off and adjust contribution percentages per device in the HiveMind view.'
+  }
+  return `You asked: "${userText.slice(0, 80)}". I'm running in offline mode — add an OpenAI API key to your backend to get real AI responses. I can still help you navigate Zenith!`
+}
 
 app.get('/api/updates/latest', (_req, res) => {
   res.json({

@@ -11,6 +11,8 @@ import {
 import { autoUpdater } from 'electron-updater'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import os from 'os'
+import fs from 'fs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -186,6 +188,37 @@ function setupAutoUpdater(): void {
 
 // ─── IPC handlers ─────────────────────────────────────────────────────────────
 
+// ─── Device ID ───────────────────────────────────────────────────────────────
+
+function getOrCreateDeviceId(): string {
+  const dataPath = path.join(app.getPath('userData'), 'zenith-device-id.json')
+  try {
+    const data = JSON.parse(fs.readFileSync(dataPath, 'utf-8')) as { deviceId: string }
+    if (data.deviceId) return data.deviceId
+  } catch { /* not found — create one */ }
+  const id = `electron-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  fs.writeFileSync(dataPath, JSON.stringify({ deviceId: id }), 'utf-8')
+  return id
+}
+
+// ─── System stats ─────────────────────────────────────────────────────────────
+
+async function getCpuPercent(): Promise<number> {
+  const before = os.cpus().map((c) => ({ ...c.times }))
+  await new Promise<void>((r) => setTimeout(r, 300))
+  const after = os.cpus()
+  let idleDiff = 0, totalDiff = 0
+  before.forEach((b, i) => {
+    const a = after[i].times
+    idleDiff  += a.idle  - b.idle
+    totalDiff += (a.user + a.nice + a.sys + a.irq + a.idle) -
+                 (b.user + b.nice + b.sys + b.irq + b.idle)
+  })
+  return totalDiff === 0 ? 0 : Math.round(100 * (1 - idleDiff / totalDiff))
+}
+
+// ─── IPC handlers ─────────────────────────────────────────────────────────────
+
 ipcMain.handle('install-update', () => {
   autoUpdater.quitAndInstall(false, true)
 })
@@ -197,6 +230,35 @@ ipcMain.handle('open-external', (_event, url: unknown) => {
 })
 
 ipcMain.handle('get-app-version', () => app.getVersion())
+
+ipcMain.handle('get-device-id', () => getOrCreateDeviceId())
+
+ipcMain.handle('get-system-stats', async () => {
+  const totalRam = os.totalmem()
+  const freeRam = os.freemem()
+  const cpuPercent = await getCpuPercent()
+
+  let diskTotalGb = 0
+  let diskUsedGb = 0
+  try {
+    const stats = await fs.promises.statfs(app.getPath('userData'))
+    diskTotalGb = Number(((stats.bsize * stats.blocks) / 1073741824).toFixed(2))
+    diskUsedGb  = Number(((stats.bsize * (stats.blocks - stats.bfree)) / 1073741824).toFixed(2))
+  } catch { /* statfs not available on this platform */ }
+
+  return {
+    deviceId: getOrCreateDeviceId(),
+    hostname: os.hostname(),
+    platform: os.platform(),
+    cpuModel: os.cpus()[0]?.model ?? 'Unknown',
+    cpuCores: os.cpus().length,
+    cpuPercent,
+    ramUsedGb: Number(((totalRam - freeRam) / 1073741824).toFixed(2)),
+    ramTotalGb: Number((totalRam / 1073741824).toFixed(2)),
+    diskUsedGb,
+    diskTotalGb,
+  }
+})
 
 ipcMain.handle('show-window', () => {
   mainWindow?.show()

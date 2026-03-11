@@ -26,6 +26,18 @@ type DeviceInfo = {
   computeProfile: ComputeProfile
   storageContributionGb: number
   appInstalled?: boolean
+  // Electron heartbeat stats
+  electronDeviceId?: string
+  hostname?: string
+  platform?: string
+  cpuModel?: string
+  cpuCores?: number
+  cpuPercent?: number
+  ramUsedGb?: number
+  ramTotalGb?: number
+  diskUsedGb?: number
+  diskTotalGb?: number
+  lastStatsAt?: number
 }
 
 type DriveNode = {
@@ -342,10 +354,100 @@ function App() {
     window.electronAPI.onUpdateDownloaded(() => setUpdateDownloaded(true))
     return () => window.electronAPI?.removeAllListeners()
   }, [])
+
+  // Electron device heartbeat — register once then ping every 30 s with live stats
+  useEffect(() => {
+    if (!window.electronAPI || !authToken) return
+
+    let deviceId = heartbeatDeviceId
+    let stopped = false
+
+    const sendHeartbeat = async () => {
+      if (stopped) return
+      try {
+        const stats = await window.electronAPI!.getSystemStats()
+
+        // Register this machine once per session
+        if (!deviceId) {
+          const regRes = await apiFetch('/api/devices/register-electron', {
+            method: 'POST',
+            body: JSON.stringify({
+              electronDeviceId: stats.deviceId,
+              hostname: stats.hostname,
+              platform: stats.platform,
+              cpuModel: stats.cpuModel,
+              cpuCores: stats.cpuCores,
+              storageContributionGb: Math.round(stats.diskTotalGb),
+            }),
+          })
+          if (regRes.ok) {
+            const data = (await regRes.json()) as { deviceId: string; created: boolean }
+            deviceId = data.deviceId
+            setHeartbeatDeviceId(deviceId)
+            localStorage.setItem('zenith_electron_device_id', deviceId)
+            if (data.created) {
+              // Refresh device list so the new device appears
+              loadApiState().catch(() => {})
+            }
+          }
+        }
+
+        if (!deviceId || stopped) return
+
+        await apiFetch(`/api/devices/${deviceId}/ping`, {
+          method: 'POST',
+          body: JSON.stringify({
+            electronDeviceId: stats.deviceId,
+            hostname: stats.hostname,
+            platform: stats.platform,
+            cpuModel: stats.cpuModel,
+            cpuCores: stats.cpuCores,
+            cpuPercent: stats.cpuPercent,
+            ramUsedGb: stats.ramUsedGb,
+            ramTotalGb: stats.ramTotalGb,
+            diskUsedGb: stats.diskUsedGb,
+            diskTotalGb: stats.diskTotalGb,
+          }),
+        })
+
+        // Update local device stats in-place
+        setDevices((prev) =>
+          prev.map((d) =>
+            d.id === deviceId
+              ? {
+                  ...d,
+                  status: 'Online' as DeviceStatus,
+                  cpuPercent: stats.cpuPercent,
+                  ramUsedGb: stats.ramUsedGb,
+                  ramTotalGb: stats.ramTotalGb,
+                  diskUsedGb: stats.diskUsedGb,
+                  diskTotalGb: stats.diskTotalGb,
+                  hostname: stats.hostname,
+                  lastStatsAt: Date.now(),
+                }
+              : d,
+          ),
+        )
+      } catch { /* silent — heartbeat failures shouldn't disrupt the UI */ }
+    }
+
+    // Send immediately, then every 30 s
+    sendHeartbeat()
+    const interval = setInterval(sendHeartbeat, 30_000)
+    return () => {
+      stopped = true
+      clearInterval(interval)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authToken])
   const [selectedEngineModel, setSelectedEngineModel] = useState<string>('standard')
   const [engineResourcePercent, setEngineResourcePercent] = useState(50)
   const [hiveSettingsLocked, setHiveSettingsLocked] = useState(false)
   const [driveFileMenuId, setDriveFileMenuId] = useState<string | null>(null)
+  const [fidusStreaming, setFidusStreaming] = useState(false)
+  const [heartbeatDeviceId, setHeartbeatDeviceId] = useState<string | null>(() =>
+    localStorage.getItem('zenith_electron_device_id'),
+  )
 
   const isWebRuntime = useMemo(() => !window.electronAPI?.isElectron, [])
   const [updateDownloaded, setUpdateDownloaded] = useState(false)
@@ -935,63 +1037,116 @@ function App() {
     event.target.value = ''
   }
 
-  const getFidusReply = (input: string) => {
-    const text = input.toLowerCase()
-
-    if (text.includes('drive')) {
-      return 'Drive now supports folders/files, uploads, and Photo Album linking. We can add permissions next.'
-    }
-
-    if (text.includes('devices')) {
-      return 'Devices are ready for distributed scheduling. Next step could be live health checks per device.'
-    }
-
-    if (text.includes('theme')) {
-      return 'Theme app can evolve into presets, custom palettes, and font packs when you are ready.'
-    }
-
-    return 'I can help with product planning, UI drafts, and implementation checklists. What should we build next?'
-  }
-
   const handleSendFidusMessage = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const nextText = fidusInput.trim()
+    if (!nextText || fidusStreaming) return
 
-    if (!nextText) {
-      return
-    }
+    const userMsgId = `user-${Date.now()}`
+    const fidusMsgId = `fidus-${Date.now() + 1}`
+    const userMessage: ChatMessage = { id: userMsgId, role: 'user', text: nextText }
 
-    const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      text: nextText,
-    }
+    const activeConv = fidusConversations.find((c) => c.id === activeFidusConvId)
+    const history = (activeConv?.messages ?? []).map((m) => ({ role: m.role, text: m.text }))
 
-    const fidusReply: ChatMessage = {
-      id: `fidus-${Date.now() + 1}`,
-      role: 'fidus',
-      text: getFidusReply(nextText),
-    }
-
-    // Optimistic update (also auto-title on first real user message)
+    // Optimistically add user message + empty fidus placeholder
     setFidusConversations((prev) =>
       prev.map((conv) =>
         conv.id === activeFidusConvId
           ? {
               ...conv,
-              messages: [...conv.messages, userMessage, fidusReply],
+              messages: [
+                ...conv.messages,
+                userMessage,
+                { id: fidusMsgId, role: 'fidus' as const, text: '' },
+              ],
               title: conv.title === 'New Chat' ? nextText.slice(0, 30).trim() : conv.title,
             }
           : conv,
       ),
     )
     setFidusInput('')
+    setFidusStreaming(true)
 
-    // Persist to backend (fire-and-forget, optimistic UI already updated)
+    let fullText = ''
+    try {
+      const res = await fetch(`${API_BASE}/api/fidus/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        },
+        body: JSON.stringify({
+          conversationId: activeFidusConvId,
+          messages: [...history, { role: 'user', text: nextText }],
+        }),
+      })
+
+      if (!res.ok || !res.body) throw new Error('Stream unavailable')
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const payload = JSON.parse(line.slice(6)) as {
+              chunk?: string; done?: boolean; fullText?: string
+            }
+            if (payload.done) {
+              fullText = payload.fullText ?? fullText
+            } else if (payload.chunk) {
+              fullText += payload.chunk
+              // snapshot to avoid closure staleness
+              const snapshot = fullText
+              setFidusConversations((prev) =>
+                prev.map((conv) =>
+                  conv.id === activeFidusConvId
+                    ? {
+                        ...conv,
+                        messages: conv.messages.map((m) =>
+                          m.id === fidusMsgId ? { ...m, text: snapshot } : m,
+                        ),
+                      }
+                    : conv,
+                ),
+              )
+            }
+          } catch { /* ignore malformed SSE line */ }
+        }
+      }
+    } catch {
+      fullText = 'Sorry, I had trouble connecting. Please try again.'
+      setFidusConversations((prev) =>
+        prev.map((conv) =>
+          conv.id === activeFidusConvId
+            ? {
+                ...conv,
+                messages: conv.messages.map((m) =>
+                  m.id === fidusMsgId ? { ...m, text: fullText } : m,
+                ),
+              }
+            : conv,
+        ),
+      )
+    } finally {
+      setFidusStreaming(false)
+    }
+
+    // Persist both messages to backend
     apiFetch(`/api/conversations/${activeFidusConvId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ messages: [userMessage, fidusReply] }),
-    }).catch(() => { /* silent — messages already shown in UI */ })
+      body: JSON.stringify({
+        messages: [userMessage, { id: fidusMsgId, role: 'fidus', text: fullText }],
+      }),
+    }).catch(() => {})
   }
 
   const handleOpenDesktopView = () => {
@@ -1395,6 +1550,9 @@ function App() {
                   <div className="device-card-head">
                     <h3>{mainSystemDevice.name}</h3>
                     <div className="device-head-badges">
+                      {heartbeatDeviceId === mainSystemDevice.id && (
+                        <span className="badge-this-device">This Device</span>
+                      )}
                       {mainSystemDevice.appInstalled && (
                         <span className="badge-app-installed">Zenith Installed</span>
                       )}
@@ -1406,6 +1564,35 @@ function App() {
                   <p className="device-meta">{mainSystemDevice.type} · Main System</p>
                   <p className="device-meta">Compute: {mainSystemDevice.computeProfile}</p>
                   <p className="device-meta">Storage Contribution: {mainSystemDevice.storageContributionGb} GB</p>
+                  {mainSystemDevice.cpuPercent !== undefined && (
+                    <div className="device-stat-bars">
+                      <div className="device-stat-row">
+                        <span className="device-stat-label">CPU</span>
+                        <div className="device-stat-bar">
+                          <div className="device-stat-bar-fill" style={{ width: `${Math.min(100, mainSystemDevice.cpuPercent)}%` }} />
+                        </div>
+                        <span className="device-stat-value">{mainSystemDevice.cpuPercent.toFixed(0)}%</span>
+                      </div>
+                      {(mainSystemDevice.ramTotalGb ?? 0) > 0 && (
+                        <div className="device-stat-row">
+                          <span className="device-stat-label">RAM</span>
+                          <div className="device-stat-bar">
+                            <div className="device-stat-bar-fill" style={{ width: `${Math.min(100, ((mainSystemDevice.ramUsedGb ?? 0) / (mainSystemDevice.ramTotalGb ?? 1)) * 100)}%` }} />
+                          </div>
+                          <span className="device-stat-value">{(mainSystemDevice.ramUsedGb ?? 0).toFixed(1)} / {(mainSystemDevice.ramTotalGb ?? 0).toFixed(1)} GB</span>
+                        </div>
+                      )}
+                      {(mainSystemDevice.diskTotalGb ?? 0) > 0 && (
+                        <div className="device-stat-row">
+                          <span className="device-stat-label">Disk</span>
+                          <div className="device-stat-bar">
+                            <div className="device-stat-bar-fill" style={{ width: `${Math.min(100, ((mainSystemDevice.diskUsedGb ?? 0) / (mainSystemDevice.diskTotalGb ?? 1)) * 100)}%` }} />
+                          </div>
+                          <span className="device-stat-value">{(mainSystemDevice.diskUsedGb ?? 0).toFixed(0)} / {(mainSystemDevice.diskTotalGb ?? 0).toFixed(0)} GB</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {mainSystemDevice.storageContributionGb > 0 && mainSystemDevice.status === 'Online' && (
                     <p className="device-meta cloud-ok">☁ ✓ Cloud storage online — files accessible from all devices</p>
                   )}
@@ -1431,6 +1618,9 @@ function App() {
                             <div className="device-card-head">
                               <h3>{device.name}</h3>
                               <div className="device-head-badges">
+                                {heartbeatDeviceId === device.id && (
+                                  <span className="badge-this-device">This Device</span>
+                                )}
                                 {device.appInstalled ? (
                                   <span className="badge-app-installed">App ✓</span>
                                 ) : (
@@ -1444,6 +1634,35 @@ function App() {
                             <p className="device-meta">{device.type}</p>
                             <p className="device-meta">Compute: {device.computeProfile}</p>
                             <p className="device-meta">Storage: {device.storageContributionGb} GB</p>
+                            {device.cpuPercent !== undefined && (
+                              <div className="device-stat-bars">
+                                <div className="device-stat-row">
+                                  <span className="device-stat-label">CPU</span>
+                                  <div className="device-stat-bar">
+                                    <div className="device-stat-bar-fill" style={{ width: `${Math.min(100, device.cpuPercent)}%` }} />
+                                  </div>
+                                  <span className="device-stat-value">{device.cpuPercent.toFixed(0)}%</span>
+                                </div>
+                                {(device.ramTotalGb ?? 0) > 0 && (
+                                  <div className="device-stat-row">
+                                    <span className="device-stat-label">RAM</span>
+                                    <div className="device-stat-bar">
+                                      <div className="device-stat-bar-fill" style={{ width: `${Math.min(100, ((device.ramUsedGb ?? 0) / (device.ramTotalGb ?? 1)) * 100)}%` }} />
+                                    </div>
+                                    <span className="device-stat-value">{(device.ramUsedGb ?? 0).toFixed(1)} / {(device.ramTotalGb ?? 0).toFixed(1)} GB</span>
+                                  </div>
+                                )}
+                                {(device.diskTotalGb ?? 0) > 0 && (
+                                  <div className="device-stat-row">
+                                    <span className="device-stat-label">Disk</span>
+                                    <div className="device-stat-bar">
+                                      <div className="device-stat-bar-fill" style={{ width: `${Math.min(100, ((device.diskUsedGb ?? 0) / (device.diskTotalGb ?? 1)) * 100)}%` }} />
+                                    </div>
+                                    <span className="device-stat-value">{(device.diskUsedGb ?? 0).toFixed(0)} / {(device.diskTotalGb ?? 0).toFixed(0)} GB</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                             {device.storageContributionGb > 0 && device.status === 'Online' && (
                               <p className="device-meta cloud-ok">☁ ✓ Cloud storage online</p>
                             )}
@@ -1881,7 +2100,10 @@ function App() {
                         className={message.role === 'user' ? 'fidus-bubble user' : 'fidus-bubble'}
                       >
                         <p className="fidus-role">{message.role === 'user' ? 'You' : 'Fidus'}</p>
-                        <p>{message.text}</p>
+                        {message.text
+                          ? <p>{message.text}</p>
+                          : <p className="fidus-typing"><span /><span /><span /></p>
+                        }
                       </article>
                     ))}
                   </section>
@@ -1895,9 +2117,10 @@ function App() {
                         placeholder="Ask Fidus anything..."
                         value={fidusInput}
                         onChange={(event) => setFidusInput(event.target.value)}
+                        disabled={fidusStreaming}
                       />
-                      <button className="primary-button" type="submit">
-                        Send
+                      <button className="primary-button" type="submit" disabled={fidusStreaming}>
+                        {fidusStreaming ? '...' : 'Send'}
                       </button>
                     </div>
                   </form>
