@@ -50,6 +50,7 @@ type DriveNode = {
 type UserAccount = {
   id: string
   name: string
+  username: string
   email: string
   password: string
   role: string
@@ -58,6 +59,7 @@ type UserAccount = {
 type AuthTokenPayload = {
   sub: string
   name: string
+  username: string
   email: string
   role: string
 }
@@ -119,7 +121,7 @@ const authLimiter = rateLimit({
 })
 
 const signupSchema = z.object({
-  name: z.string().min(2),
+  username: z.string().min(2).max(32).regex(/^[a-zA-Z0-9_-]+$/, 'Username can only contain letters, numbers, underscores, and hyphens'),
   email: z.email(),
   password: z.string().min(8),
 })
@@ -195,6 +197,7 @@ const initSchema = () => {
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      username TEXT NOT NULL DEFAULT '',
       email TEXT NOT NULL UNIQUE,
       password TEXT NOT NULL
     );
@@ -358,6 +361,11 @@ const initSchema = () => {
     db.exec('ALTER TABLE app_state ADD COLUMN user_id TEXT')
     db.exec('UPDATE app_state SET user_id = (SELECT id FROM users LIMIT 1)')
   }
+
+  // Add username column to users table and backfill from name
+  try { db.exec(`ALTER TABLE users ADD COLUMN username TEXT NOT NULL DEFAULT ''`) } catch { /* already exists */ }
+  db.exec(`UPDATE users SET username = LOWER(REPLACE(REPLACE(name, ' ', '_'), '.', '_')) WHERE username = '' OR username IS NULL`)
+  try { db.exec(`CREATE UNIQUE INDEX idx_users_username ON users(username)`) } catch { /* already exists */ }
 }
 
 const seedUserDefaults = (userId: string) => {
@@ -607,9 +615,17 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
   }
 
   const email = parsed.data.email.toLowerCase()
+  const username = parsed.data.username.toLowerCase()
+
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email)
   if (existing) {
     res.status(409).json({ error: 'email_taken', message: 'An account with this email already exists. Try logging in instead.' })
+    return
+  }
+
+  const existingUsername = db.prepare('SELECT id FROM users WHERE username = ?').get(username)
+  if (existingUsername) {
+    res.status(409).json({ error: 'username_taken', message: 'That username is already taken. Please choose another.' })
     return
   }
 
@@ -618,9 +634,10 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
   // First user to sign up becomes admin; subsequent users are 'user'
   const existingAdminCount = (db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin'").get() as { c: number }).c
   const role = existingAdminCount === 0 ? 'admin' : 'user'
-  db.prepare('INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)').run(
+  db.prepare('INSERT INTO users (id, name, username, email, password, role) VALUES (?, ?, ?, ?, ?, ?)').run(
     id,
-    parsed.data.name,
+    username,
+    username,
     email,
     passwordHash,
     role,
@@ -629,9 +646,9 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
   // Seed user-specific defaults
   seedUserDefaults(id);
 
-  const token = createAuthToken({ sub: id, name: parsed.data.name, email, role })
+  const token = createAuthToken({ sub: id, name: username, username, email, role })
 
-  res.status(201).json({ id, name: parsed.data.name, email, role, token })
+  res.status(201).json({ id, name: username, username, email, role, token })
 })
 
 app.post('/api/auth/login', authLimiter, async (req, res) => {
@@ -643,7 +660,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
   const email = parsed.data.email.toLowerCase()
   const user = db
-    .prepare('SELECT id, name, email, password, role FROM users WHERE email = ?')
+    .prepare('SELECT id, name, username, email, password, role FROM users WHERE email = ?')
     .get(email) as UserAccount | undefined
 
   if (!user) {
@@ -668,8 +685,9 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   }
 
   const role = user.role ?? 'user'
-  const token = createAuthToken({ sub: user.id, name: user.name, email: user.email, role })
-  res.json({ id: user.id, name: user.name, email: user.email, role, token })
+  const displayName = user.username || user.name
+  const token = createAuthToken({ sub: user.id, name: displayName, username: displayName, email: user.email, role })
+  res.json({ id: user.id, name: displayName, username: displayName, email: user.email, role, token })
 })
 
 app.post('/api/auth/logout', requireAuth, (_req: AuthRequest, res) => {
@@ -1146,7 +1164,8 @@ app.get('/api/wallet', requireAuth, (req: AuthRequest, res) => {
   const txRows = db.prepare(`
     SELECT
       t.id, t.from_user_id, t.to_user_id, t.amount, t.note, t.created_at,
-      uf.name AS from_name, ut.name AS to_name
+      COALESCE(NULLIF(uf.username, ''), uf.name) AS from_name,
+      COALESCE(NULLIF(ut.username, ''), ut.name) AS to_name
     FROM token_transactions t
     JOIN users uf ON t.from_user_id = uf.id
     JOIN users ut ON t.to_user_id = ut.id
@@ -1173,12 +1192,12 @@ app.get('/api/wallet', requireAuth, (req: AuthRequest, res) => {
 
 app.post('/api/wallet/send', requireAuth, (req: AuthRequest, res) => {
   const userId = req.userId!
-  const { recipientEmail, amount, note } = req.body as {
-    recipientEmail?: unknown; amount?: unknown; note?: unknown
+  const { recipientUsername, amount, note } = req.body as {
+    recipientUsername?: unknown; amount?: unknown; note?: unknown
   }
 
-  if (typeof recipientEmail !== 'string' || !recipientEmail.trim()) {
-    res.status(400).json({ error: 'recipientEmail is required' }); return
+  if (typeof recipientUsername !== 'string' || !recipientUsername.trim()) {
+    res.status(400).json({ error: 'recipientUsername is required' }); return
   }
   const parsedAmount = Number(amount)
   if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
@@ -1188,12 +1207,12 @@ app.post('/api/wallet/send', requireAuth, (req: AuthRequest, res) => {
     res.status(400).json({ error: 'amount exceeds maximum single transfer limit' }); return
   }
 
-  const senderRow = db.prepare('SELECT name FROM users WHERE id = ?').get(userId) as { name: string } | undefined
-  const recipientRow = db.prepare('SELECT id, name FROM users WHERE email = ?').get(recipientEmail.trim().toLowerCase()) as
-    | { id: string; name: string } | undefined
+  const senderRow = db.prepare(`SELECT COALESCE(NULLIF(username, ''), name) as displayName FROM users WHERE id = ?`).get(userId) as { displayName: string } | undefined
+  const recipientRow = db.prepare(`SELECT id, COALESCE(NULLIF(username, ''), name) as displayName FROM users WHERE LOWER(username) = ?`).get(recipientUsername.trim().toLowerCase()) as
+    | { id: string; displayName: string } | undefined
 
   if (!recipientRow) {
-    res.status(404).json({ error: 'no_account', message: 'No Zenith account found with that email address.' }); return
+    res.status(404).json({ error: 'no_account', message: 'No Zenith account found with that username.' }); return
   }
   if (recipientRow.id === userId) {
     res.status(400).json({ error: 'self_transfer', message: 'You cannot send tokens to yourself.' }); return
@@ -1215,7 +1234,7 @@ app.post('/api/wallet/send', requireAuth, (req: AuthRequest, res) => {
       recipientRow.id,
       'token_received',
       `You received ${rounded.toFixed(2)} tokens`,
-      `From ${senderRow?.name ?? 'someone'}${typeof note === 'string' && note.trim() ? ` — "${note.trim()}"` : ''}`,
+      `From @${senderRow?.displayName ?? 'someone'}${typeof note === 'string' && note.trim() ? ` — "${note.trim()}"` : ''}`,
     )
   })
   tx()
@@ -1223,23 +1242,24 @@ app.post('/api/wallet/send', requireAuth, (req: AuthRequest, res) => {
   res.json({
     ok: true,
     newBalance: Number((senderBalance - rounded).toFixed(2)),
-    message: `Sent ${rounded.toFixed(2)} tokens to ${recipientRow.name}.`,
+    message: `Sent ${rounded.toFixed(2)} tokens to @${recipientRow.displayName}.`,
   })
 })
 
 // ── Account Settings ──────────────────────────────────────────────────────────
 app.get('/api/account', requireAuth, (req: AuthRequest, res) => {
   const userId = req.userId!
-  const row = db.prepare('SELECT id, name, email, role FROM users WHERE id = ?').get(userId) as
-    | { id: string; name: string; email: string; role: string } | undefined
+  const row = db.prepare('SELECT id, name, username, email, role FROM users WHERE id = ?').get(userId) as
+    | { id: string; name: string; username: string; email: string; role: string } | undefined
   if (!row) { res.status(404).json({ error: 'User not found' }); return }
-  res.json({ id: row.id, name: row.name, email: row.email, role: row.role ?? 'user' })
+  const displayName = row.username || row.name
+  res.json({ id: row.id, name: displayName, username: displayName, email: row.email, role: row.role ?? 'user' })
 })
 
 app.patch('/api/account', requireAuth, async (req: AuthRequest, res) => {
   const userId = req.userId!
-  const { name, email, currentPassword, newPassword } = req.body as {
-    name?: unknown; email?: unknown; currentPassword?: unknown; newPassword?: unknown
+  const { name, username, email, currentPassword, newPassword } = req.body as {
+    name?: unknown; username?: unknown; email?: unknown; currentPassword?: unknown; newPassword?: unknown
   }
 
   const user = db.prepare('SELECT id, name, email, password FROM users WHERE id = ?').get(userId) as UserAccount | undefined
@@ -1264,6 +1284,14 @@ app.patch('/api/account', requireAuth, async (req: AuthRequest, res) => {
     updates.push('name = ?')
     values.push(name.trim())
   }
+  // Support username update (preferred over name)
+  const newUsername = typeof username === 'string' ? username.trim().toLowerCase() : undefined
+  if (newUsername && newUsername.length >= 2 && /^[a-zA-Z0-9_-]+$/.test(newUsername)) {
+    const taken = db.prepare('SELECT id FROM users WHERE LOWER(username) = ? AND id != ?').get(newUsername, userId)
+    if (taken) { res.status(409).json({ error: 'username_taken', message: 'That username is already taken.' }); return }
+    updates.push('username = ?', 'name = ?')
+    values.push(newUsername, newUsername)
+  }
   if (typeof email === 'string' && /\S+@\S+\.\S+/.test(email)) {
     const emailLower = email.toLowerCase()
     const taken = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(emailLower, userId)
@@ -1282,8 +1310,9 @@ app.patch('/api/account', requireAuth, async (req: AuthRequest, res) => {
   values.push(userId)
   db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...values)
 
-  const updated = db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(userId) as { id: string; name: string; email: string }
-  res.json({ ok: true, name: updated.name, email: updated.email })
+  const updated = db.prepare('SELECT id, name, username, email FROM users WHERE id = ?').get(userId) as { id: string; name: string; username: string; email: string }
+  const updatedDisplay = updated.username || updated.name
+  res.json({ ok: true, name: updatedDisplay, username: updatedDisplay, email: updated.email })
 })
 
 // ── Notifications ─────────────────────────────────────────────────────────────
@@ -1629,7 +1658,7 @@ app.get('/api/admin/stats', requireAuth, requireAdmin, (_req: AuthRequest, res) 
   const totalConversations = (db.prepare('SELECT COUNT(*) as c FROM fidus_conversations').get() as { c: number }).c
   const totalMessages = (db.prepare('SELECT COUNT(*) as c FROM fidus_messages').get() as { c: number }).c
   const totalStorageGb = (db.prepare('SELECT COALESCE(SUM(storage_contribution_gb), 0) as s FROM devices').get() as { s: number }).s
-  const users = db.prepare('SELECT id, name, email, role FROM users ORDER BY rowid ASC LIMIT 100').all() as Array<{ id: string; name: string; email: string; role: string }>
+  const users = db.prepare(`SELECT id, COALESCE(NULLIF(username, ''), name) as name, email, role FROM users ORDER BY rowid ASC LIMIT 100`).all() as Array<{ id: string; name: string; email: string; role: string }>
   res.json({ totalUsers, totalDevices, onlineDevices, totalFiles, totalFolders, totalConversations, totalMessages, totalStorageGb, users })
 })
 

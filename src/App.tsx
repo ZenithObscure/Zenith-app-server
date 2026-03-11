@@ -119,6 +119,7 @@ type ApiState = {
 type AuthResponse = {
   id: string
   name: string
+  username: string
   email: string
   role: string
   token: string
@@ -310,7 +311,7 @@ function App() {
   const [mode, setMode] = useState<AuthMode>('login')
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
-  const [signupName, setSignupName] = useState('')
+  const [signupUsername, setSignupUsername] = useState('')
   const [signupEmail, setSignupEmail] = useState('')
   const [signupPassword, setSignupPassword] = useState('')
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('')
@@ -318,7 +319,7 @@ function App() {
   const [statusKind, setStatusKind] = useState<StatusKind>('error')
   const [tokenBalance, setTokenBalance] = useState(0)
   const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([])
-  const [walletRecipientEmail, setWalletRecipientEmail] = useState('')
+  const [walletRecipientUsername, setWalletRecipientUsername] = useState('')
   const [desktopVersion, setDesktopVersion] = useState<string | null>(null)
   const [desktopReleasesUrl, setDesktopReleasesUrl] = useState('https://github.com/ZenithObscure/Zenith-app-server/releases')
   const [desktopAssetBaseUrl, setDesktopAssetBaseUrl] = useState<string | null>(null)
@@ -350,6 +351,7 @@ function App() {
   const [newFolderName, setNewFolderName] = useState('')
   const [newFileName, setNewFileName] = useState('')
   const [fidusInput, setFidusInput] = useState('')
+  const [fidusSearchQuery, setFidusSearchQuery] = useState('')
   const [fidusConversations, setFidusConversations] = useState<FidusConversation[]>([])
   const [activeFidusConvId, setActiveFidusConvId] = useState<string>('conv-init')
   const [selectedMockPhotoId, setSelectedMockPhotoId] = useState<string | null>(null)
@@ -590,9 +592,10 @@ function App() {
   }
 
   const persistAuthSession = (payload: AuthResponse) => {
-    setAccountName(payload.name)
+    const displayName = payload.username || payload.name
+    setAccountName(displayName)
     setAccountEmail(payload.email)
-    setSettingsName(payload.name)
+    setSettingsName(displayName)
     setSettingsEmail(payload.email)
     setAuthToken(payload.token)
     setUserId(payload.id)
@@ -751,9 +754,15 @@ function App() {
   const handleSignup = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
-    if (signupName.trim().length < 2) {
+    if (signupUsername.trim().length < 2) {
       setStatusKind('error')
-      setStatus('Please enter your full name.')
+      setStatus('Please enter a username with at least 2 characters.')
+      return
+    }
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(signupUsername.trim())) {
+      setStatusKind('error')
+      setStatus('Username can only contain letters, numbers, underscores, and hyphens.')
       return
     }
 
@@ -780,7 +789,7 @@ function App() {
       response = await apiFetch('/api/auth/signup', {
         method: 'POST',
         body: JSON.stringify({
-          name: signupName.trim(),
+          username: signupUsername.trim(),
           email: signupEmail,
           password: signupPassword,
         }),
@@ -796,6 +805,8 @@ function App() {
       setStatusKind('error')
       if (body?.error === 'email_taken') {
         setStatus(body.message ?? 'An account with this email already exists.')
+      } else if (body?.error === 'username_taken') {
+        setStatus(body.message ?? 'That username is already taken. Please choose another.')
       } else if (body?.error === 'rate_limited') {
         setStatus(body.message ?? 'Too many attempts. Please wait before trying again.')
       } else {
@@ -1563,7 +1574,7 @@ function App() {
           )}
         </div>
       </div>
-      <h2>{accountName}</h2>
+      <h2>@{accountName}</h2>
       <p className="sidebar-email">{accountEmail}</p>
   <p
         className="token-balance"
@@ -2277,8 +2288,19 @@ function App() {
                       + New
                     </button>
                   </div>
+                  <div className="fidus-search-row">
+                    <input
+                      type="search"
+                      className="fidus-search-input"
+                      placeholder="Search conversations…"
+                      value={fidusSearchQuery}
+                      onChange={(e) => setFidusSearchQuery(e.target.value)}
+                    />
+                  </div>
                   <ul className="fidus-history-list">
-                    {fidusConversations.map((conv) => {
+                    {fidusConversations
+                      .filter((c) => fidusSearchQuery === '' || c.title.toLowerCase().includes(fidusSearchQuery.toLowerCase()))
+                      .map((conv) => {
                       const lastMsg = conv.messages[conv.messages.length - 1]
                       const preview = lastMsg ? lastMsg.text.slice(0, 55) + (lastMsg.text.length > 55 ? '…' : '') : ''
                       return (
@@ -3046,9 +3068,9 @@ function App() {
     const handleSendTokens = async (e: FormEvent<HTMLFormElement>) => {
       e.preventDefault()
       const amount = parseFloat(walletAmount)
-      if (!walletRecipientEmail.trim() || !Number.isFinite(amount) || amount <= 0) {
+      if (!walletRecipientUsername.trim() || !Number.isFinite(amount) || amount <= 0) {
         setStatusKind('error')
-        setStatus('Please enter a valid recipient email and amount.')
+        setStatus('Please enter a valid recipient username and amount.')
         return
       }
       setWalletSending(true)
@@ -3056,7 +3078,7 @@ function App() {
         const res = await apiFetch('/api/wallet/send', {
           method: 'POST',
           body: JSON.stringify({
-            recipientEmail: walletRecipientEmail.trim(),
+            recipientUsername: walletRecipientUsername.trim(),
             amount,
             note: walletNote.trim() || undefined,
           }),
@@ -3068,7 +3090,7 @@ function App() {
         } else {
           setTokenBalance(data.newBalance ?? tokenBalance)
           setWalletAmount('')
-          setWalletRecipientEmail('')
+          setWalletRecipientUsername('')
           setWalletNote('')
           setStatusKind('success')
           setStatus(data.message ?? 'Tokens sent!')
@@ -3102,13 +3124,13 @@ function App() {
                   <h2 className="section-title">Send Tokens</h2>
                   <form onSubmit={handleSendTokens} className="wallet-send-form">
                     <div className="wallet-field">
-                      <label htmlFor="wallet-recipient">Recipient Email</label>
+                      <label htmlFor="wallet-recipient">Recipient Username</label>
                       <input
                         id="wallet-recipient"
-                        type="email"
-                        placeholder="user@example.com"
-                        value={walletRecipientEmail}
-                        onChange={(e) => setWalletRecipientEmail(e.target.value)}
+                        type="text"
+                        placeholder="zenith_user"
+                        value={walletRecipientUsername}
+                        onChange={(e) => setWalletRecipientUsername(e.target.value)}
                         autoComplete="off"
                       />
                     </div>
@@ -3192,7 +3214,7 @@ function App() {
       setSettingsMsg('')
 
       const body: Record<string, string> = {}
-      if (settingsName.trim() && settingsName.trim() !== accountName) body.name = settingsName.trim()
+      if (settingsName.trim() && settingsName.trim() !== accountName) body.username = settingsName.trim()
       if (settingsEmail.trim() && settingsEmail.trim() !== accountEmail) body.email = settingsEmail.trim()
       if (settingsNewPw.trim()) {
         body.newPassword = settingsNewPw
@@ -3211,14 +3233,15 @@ function App() {
           method: 'PATCH',
           body: JSON.stringify(body),
         })
-        const data = (await res.json()) as { ok?: boolean; name?: string; email?: string; error?: string; message?: string }
+        const data = (await res.json()) as { ok?: boolean; name?: string; username?: string; email?: string; error?: string; message?: string }
         if (!res.ok) {
           setSettingsMsgKind('error')
           if (data.error === 'email_taken') setSettingsMsg('That email is already in use.')
+          else if (data.error === 'username_taken') setSettingsMsg('That username is already taken.')
           else if (data.error === 'wrong_password') setSettingsMsg('Current password is incorrect.')
           else setSettingsMsg(data.message ?? 'Update failed.')
         } else {
-          if (data.name) { setAccountName(data.name); setSettingsName(data.name) }
+          if (data.name) { setAccountName((data as { username?: string; name?: string }).username || data.name); setSettingsName((data as { username?: string; name?: string }).username || data.name) }
           if (data.email) { setAccountEmail(data.email); setSettingsEmail(data.email) }
           setSettingsCurrentPw('')
           setSettingsNewPw('')
@@ -3251,13 +3274,13 @@ function App() {
                 <section className="settings-section">
                   <h2 className="settings-section-title">Profile</h2>
                   <div className="settings-field">
-                    <label htmlFor="settings-name">Display Name</label>
+                    <label htmlFor="settings-name">Username</label>
                     <input
                       id="settings-name"
                       type="text"
                       value={settingsName}
                       onChange={(e) => setSettingsName(e.target.value)}
-                      placeholder="Your name"
+                      placeholder="zenith_user"
                     />
                   </div>
                   <div className="settings-field">
@@ -3697,15 +3720,15 @@ function App() {
             </form>
           ) : (
             <form className="auth-form" onSubmit={handleSignup}>
-              <label htmlFor="signup-name">Full Name</label>
+              <label htmlFor="signup-username">Username</label>
               <input
-                id="signup-name"
-                name="signup-name"
+                id="signup-username"
+                name="signup-username"
                 type="text"
-                autoComplete="name"
-                placeholder="Alex Morgan"
-                value={signupName}
-                onChange={(event) => setSignupName(event.target.value)}
+                autoComplete="username"
+                placeholder="zenith_user"
+                value={signupUsername}
+                onChange={(event) => setSignupUsername(event.target.value)}
               />
 
               <label htmlFor="signup-email">Email</label>
