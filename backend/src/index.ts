@@ -52,16 +52,19 @@ type UserAccount = {
   name: string
   email: string
   password: string
+  role: string
 }
 
 type AuthTokenPayload = {
   sub: string
   name: string
   email: string
+  role: string
 }
 
 type AuthRequest = Request & {
   userId?: string
+  userRole?: string
 }
 
 const app = express()
@@ -172,10 +175,19 @@ const requireAuth = (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const decoded = jwt.verify(token, jwtSecret) as AuthTokenPayload
     req.userId = decoded.sub
+    req.userRole = decoded.role ?? 'user'
     next()
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' })
   }
+}
+
+const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (req.userRole !== 'admin') {
+    res.status(403).json({ error: 'Forbidden', message: 'Admin access required' })
+    return
+  }
+  next()
 }
 
 const initSchema = () => {
@@ -286,6 +298,9 @@ const initSchema = () => {
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
   `)
+
+  // Add role column to users if it doesn't exist yet
+  try { db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'") } catch { /* already exists */ }
 
   // Add new columns to drive_nodes if they don't exist
   for (const col of [
@@ -434,6 +449,14 @@ const seedDefaults = () => {
 
 initSchema()
 seedDefaults()
+
+// Promote the first-ever user to admin if no admins exist yet
+;(() => {
+  const adminCount = (db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin'").get() as { c: number }).c
+  if (adminCount === 0) {
+    db.prepare("UPDATE users SET role = 'admin' WHERE id = (SELECT id FROM users ORDER BY rowid LIMIT 1)").run()
+  }
+})()
 
 const readDevices = (userId: string): DeviceInfo[] => {
   const rows = db.prepare(`
@@ -592,19 +615,23 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
 
   const id = `user-${serial()}`
   const passwordHash = await bcrypt.hash(parsed.data.password, 12)
-  db.prepare('INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)').run(
+  // First user to sign up becomes admin; subsequent users are 'user'
+  const existingAdminCount = (db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin'").get() as { c: number }).c
+  const role = existingAdminCount === 0 ? 'admin' : 'user'
+  db.prepare('INSERT INTO users (id, name, email, password, role) VALUES (?, ?, ?, ?, ?)').run(
     id,
     parsed.data.name,
     email,
     passwordHash,
+    role,
   )
 
   // Seed user-specific defaults
   seedUserDefaults(id);
 
-  const token = createAuthToken({ sub: id, name: parsed.data.name, email })
+  const token = createAuthToken({ sub: id, name: parsed.data.name, email, role })
 
-  res.status(201).json({ id, name: parsed.data.name, email, token })
+  res.status(201).json({ id, name: parsed.data.name, email, role, token })
 })
 
 app.post('/api/auth/login', authLimiter, async (req, res) => {
@@ -616,7 +643,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
   const email = parsed.data.email.toLowerCase()
   const user = db
-    .prepare('SELECT id, name, email, password FROM users WHERE email = ?')
+    .prepare('SELECT id, name, email, password, role FROM users WHERE email = ?')
     .get(email) as UserAccount | undefined
 
   if (!user) {
@@ -640,8 +667,9 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     db.prepare('UPDATE users SET password = ? WHERE id = ?').run(upgradedHash, user.id)
   }
 
-  const token = createAuthToken({ sub: user.id, name: user.name, email: user.email })
-  res.json({ id: user.id, name: user.name, email: user.email, token })
+  const role = user.role ?? 'user'
+  const token = createAuthToken({ sub: user.id, name: user.name, email: user.email, role })
+  res.json({ id: user.id, name: user.name, email: user.email, role, token })
 })
 
 app.post('/api/auth/logout', requireAuth, (_req: AuthRequest, res) => {
@@ -1158,10 +1186,10 @@ app.post('/api/wallet/send', requireAuth, (req: AuthRequest, res) => {
 // ── Account Settings ──────────────────────────────────────────────────────────
 app.get('/api/account', requireAuth, (req: AuthRequest, res) => {
   const userId = req.userId!
-  const row = db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(userId) as
-    | { id: string; name: string; email: string } | undefined
+  const row = db.prepare('SELECT id, name, email, role FROM users WHERE id = ?').get(userId) as
+    | { id: string; name: string; email: string; role: string } | undefined
   if (!row) { res.status(404).json({ error: 'User not found' }); return }
-  res.json({ id: row.id, name: row.name, email: row.email })
+  res.json({ id: row.id, name: row.name, email: row.email, role: row.role ?? 'user' })
 })
 
 app.patch('/api/account', requireAuth, async (req: AuthRequest, res) => {
@@ -1539,11 +1567,42 @@ function buildFallbackResponse(userText: string): string {
   return `You asked: "${userText.slice(0, 80)}". I'm running in offline mode — add an OpenAI API key to your backend to get real AI responses. I can still help you navigate Zenith!`
 }
 
+// ── Admin endpoints ──────────────────────────────────────────────────────────
+app.get('/api/admin/stats', requireAuth, requireAdmin, (_req: AuthRequest, res) => {
+  const totalUsers = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c
+  const totalDevices = (db.prepare('SELECT COUNT(*) as c FROM devices').get() as { c: number }).c
+  const onlineDevices = (db.prepare("SELECT COUNT(*) as c FROM devices WHERE status = 'Online'").get() as { c: number }).c
+  const totalFiles = (db.prepare("SELECT COUNT(*) as c FROM drive_nodes WHERE kind = 'file'").get() as { c: number }).c
+  const totalFolders = (db.prepare("SELECT COUNT(*) as c FROM drive_nodes WHERE kind = 'folder'").get() as { c: number }).c
+  const totalConversations = (db.prepare('SELECT COUNT(*) as c FROM fidus_conversations').get() as { c: number }).c
+  const totalMessages = (db.prepare('SELECT COUNT(*) as c FROM fidus_messages').get() as { c: number }).c
+  const totalStorageGb = (db.prepare('SELECT COALESCE(SUM(storage_contribution_gb), 0) as s FROM devices').get() as { s: number }).s
+  const users = db.prepare('SELECT id, name, email, role FROM users ORDER BY rowid ASC LIMIT 100').all() as Array<{ id: string; name: string; email: string; role: string }>
+  res.json({ totalUsers, totalDevices, onlineDevices, totalFiles, totalFolders, totalConversations, totalMessages, totalStorageGb, users })
+})
+
+app.patch('/api/admin/users/:id/role', requireAuth, requireAdmin, (req: AuthRequest, res) => {
+  const { role } = req.body as { role?: unknown }
+  if (role !== 'admin' && role !== 'user') {
+    res.status(400).json({ error: 'role must be "admin" or "user"' }); return
+  }
+  if (req.params.id === req.userId) {
+    res.status(400).json({ error: 'Cannot change your own role' }); return
+  }
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id)
+  if (!user) { res.status(404).json({ error: 'User not found' }); return }
+  db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, req.params.id)
+  res.json({ ok: true })
+})
+
 app.get('/api/updates/latest', (_req, res) => {
+  const version = process.env.APP_LATEST_VERSION ?? '0.1.0'
+  const repoBase = 'https://github.com/ZenithObscure/Zenith-app-server'
   res.json({
     channel: 'stable',
-    latestVersion: process.env.APP_LATEST_VERSION ?? '0.1.0',
-    releasesUrl: 'https://github.com/ZenithObscure/Zenith-app/releases',
+    latestVersion: version,
+    releasesUrl: `${repoBase}/releases`,
+    assetBaseUrl: `${repoBase}/releases/download/v${version}`,
     notes: 'Use this endpoint in Electron updater checks and compare with app version.',
   })
 })

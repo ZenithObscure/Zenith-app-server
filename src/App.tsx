@@ -2,7 +2,7 @@ import './styles.css'
 import { ChangeEvent, FormEvent, ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type AuthMode = 'login' | 'signup'
-type ViewMode = 'auth' | 'launcher' | 'devices' | 'drive' | 'fidus' | 'photo-album' | 'hivemind' | 'storage' | 'engine' | 'wallet' | 'desktop' | 'settings'
+type ViewMode = 'auth' | 'launcher' | 'devices' | 'drive' | 'fidus' | 'photo-album' | 'hivemind' | 'storage' | 'engine' | 'wallet' | 'desktop' | 'settings' | 'admin' | 'theme'
 type StatusKind = 'error' | 'success'
 type DeviceStatus = 'Online' | 'Offline'
 type DeviceType = 'Laptop' | 'Stationary' | 'Phone' | 'Other'
@@ -15,6 +15,7 @@ type AppTile = {
   name: string
   description: string
   icon: ReactElement
+  adminOnly?: boolean
 }
 
 type DeviceInfo = {
@@ -119,7 +120,20 @@ type AuthResponse = {
   id: string
   name: string
   email: string
+  role: string
   token: string
+}
+
+type AdminStats = {
+  totalUsers: number
+  totalDevices: number
+  onlineDevices: number
+  totalFiles: number
+  totalFolders: number
+  totalConversations: number
+  totalMessages: number
+  totalStorageGb: number
+  users: Array<{ id: string; name: string; email: string; role: string }>
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -236,6 +250,17 @@ const appTiles: AppTile[] = [
       </svg>
     ),
   },
+  {
+    id: 'admin',
+    name: 'Admin Panel',
+    description: 'Platform-wide statistics, user management, and beta app access. Administrators only.',
+    adminOnly: true,
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 1 3 5v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V5l-9-4Zm0 4.6 5 2.2V11c0 3.4-2.4 6.7-5 7.9C9.4 17.7 7 14.4 7 11V7.8l5-2.2Z" />
+      </svg>
+    ),
+  },
 ]
 
 const starterDevices: DeviceInfo[] = [
@@ -295,7 +320,17 @@ function App() {
   const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([])
   const [walletRecipientEmail, setWalletRecipientEmail] = useState('')
   const [desktopVersion, setDesktopVersion] = useState<string | null>(null)
-  const [desktopReleasesUrl, setDesktopReleasesUrl] = useState('https://github.com/ZenithObscure/Zenith-app/releases')
+  const [desktopReleasesUrl, setDesktopReleasesUrl] = useState('https://github.com/ZenithObscure/Zenith-app-server/releases')
+  const [desktopAssetBaseUrl, setDesktopAssetBaseUrl] = useState<string | null>(null)
+  const [userRole, setUserRole] = useState<string>(() => localStorage.getItem('zenith_user_role') ?? 'user')
+  const [userId, setUserId] = useState<string>('')
+  const [adminStats, setAdminStats] = useState<AdminStats | null>(null)
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() =>
+    (localStorage.getItem('zenith_theme') as 'dark' | 'light') ?? 'dark',
+  )
+  const [themeAccent, setThemeAccent] = useState<string>(() =>
+    localStorage.getItem('zenith_accent') ?? 'pink',
+  )
   const [walletAmount, setWalletAmount] = useState('')
   const [walletNote, setWalletNote] = useState('')
   const [walletSending, setWalletSending] = useState(false)
@@ -346,6 +381,14 @@ function App() {
     const el = fidusThreadRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [fidusConversations, view])
+
+  // Apply theme mode and accent color to the document root
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', themeMode)
+    document.documentElement.setAttribute('data-accent', themeAccent)
+    localStorage.setItem('zenith_theme', themeMode)
+    localStorage.setItem('zenith_accent', themeAccent)
+  }, [themeMode, themeAccent])
 
   // Electron auto-update listeners
   useEffect(() => {
@@ -551,7 +594,10 @@ function App() {
     setSettingsName(payload.name)
     setSettingsEmail(payload.email)
     setAuthToken(payload.token)
+    setUserId(payload.id)
+    setUserRole(payload.role ?? 'user')
     localStorage.setItem('zenith_auth_token', payload.token)
+    localStorage.setItem('zenith_user_role', payload.role ?? 'user')
   }
 
   const apiFetch = useCallback(async (path: string, init: RequestInit = {}, tokenOverride?: string) => {
@@ -621,6 +667,13 @@ function App() {
     if (!res.ok) return
     const data = (await res.json()) as { memories: FidusMemory[] }
     setFidusMemories(data.memories)
+  }, [apiFetch])
+
+  const loadAdminStats = useCallback(async () => {
+    const res = await apiFetch('/api/admin/stats')
+    if (!res.ok) return
+    const data = (await res.json()) as AdminStats
+    setAdminStats(data)
   }, [apiFetch])
 
   useEffect(() => {
@@ -921,8 +974,12 @@ function App() {
   const handleLogout = () => {
     setAuthToken('')
     localStorage.removeItem('zenith_auth_token')
+    localStorage.removeItem('zenith_user_role')
     setAccountName('Zenith User')
     setAccountEmail('not-set@zenith-app.net')
+    setUserRole('user')
+    setUserId('')
+    setAdminStats(null)
     setNotifications([])
     setNotifUnreadCount(0)
     setNotifPanelOpen(false)
@@ -1259,9 +1316,10 @@ function App() {
   const handleOpenDesktopView = () => {
     apiFetch('/api/updates/latest', {}).then(async (res) => {
       if (res.ok) {
-        const data = (await res.json()) as { latestVersion: string; releasesUrl: string }
+        const data = (await res.json()) as { latestVersion: string; releasesUrl: string; assetBaseUrl?: string }
         setDesktopVersion(data.latestVersion)
         setDesktopReleasesUrl(data.releasesUrl)
+        if (data.assetBaseUrl) setDesktopAssetBaseUrl(data.assetBaseUrl)
       }
     }).catch(() => {})
     setStatus('')
@@ -2751,6 +2809,21 @@ function App() {
     const latestVersion = desktopVersion ?? '0.1.0'
     const releasesUrl = desktopReleasesUrl
 
+    const platformAssetUrl = (platformId: string): string => {
+      if (!desktopAssetBaseUrl) return releasesUrl
+      if (platformId === 'windows') return `${desktopAssetBaseUrl}/Zenith%20Setup%20${latestVersion}.exe`
+      if (platformId === 'macos') return `${desktopAssetBaseUrl}/Zenith-${latestVersion}.dmg`
+      if (platformId === 'linux') return `${desktopAssetBaseUrl}/Zenith-${latestVersion}.AppImage`
+      return releasesUrl
+    }
+
+    const platformFileName = (platformId: string): string => {
+      if (platformId === 'windows') return `Zenith Setup ${latestVersion}.exe`
+      if (platformId === 'macos') return `Zenith-${latestVersion}.dmg`
+      if (platformId === 'linux') return `Zenith-${latestVersion}.AppImage`
+      return `Zenith-${latestVersion}`
+    }
+
     return (
       <main className="layout">
         <section className="launcher-shell">
@@ -2809,15 +2882,16 @@ function App() {
                       </div>
                     </div>
                     <p className="desktop-platform-file">
-                      zenith-{latestVersion}-{p.id}{p.ext}
+                      {platformFileName(p.id)}
                     </p>
                     <button
                       type="button"
                       className="primary-button"
                       style={{ width: '100%' }}
                       onClick={() => {
-                        if (window.electronAPI) window.electronAPI.openExternal(releasesUrl)
-                        else window.open(releasesUrl, '_blank')
+                        const url = platformAssetUrl(p.id)
+                        if (window.electronAPI) window.electronAPI.openExternal(url)
+                        else window.open(url, '_blank')
                       }}
                     >
                       Download {p.ext}
@@ -3145,6 +3219,168 @@ function App() {
     )
   }
 
+  if (view === 'admin') {
+    return (
+      <main className="layout">
+        <section className="launcher-shell">
+          <div className="launcher-layout">
+            {renderSidebar()}
+            <section className="launcher-main">
+              <header className="launcher-header">
+                <button type="button" className="back-btn" onClick={() => setView('launcher')} aria-label="Back to launcher">←</button>
+                <div>
+                  <p className="kicker">Administration</p>
+                  <h1>Admin Panel</h1>
+                  <p className="lead">Platform-wide statistics and user management.</p>
+                </div>
+                <button className="secondary-button" type="button" onClick={loadAdminStats}>↻ Refresh</button>
+              </header>
+
+              {!adminStats ? (
+                <p className="device-caption">Loading platform data…</p>
+              ) : (
+                <>
+                  <section className="allocation-summary">
+                    <article className="summary-card">
+                      <p className="summary-label">Total Users</p>
+                      <p className="summary-value">{adminStats.totalUsers}</p>
+                    </article>
+                    <article className="summary-card">
+                      <p className="summary-label">Total Devices</p>
+                      <p className="summary-value">{adminStats.totalDevices}</p>
+                    </article>
+                    <article className="summary-card">
+                      <p className="summary-label">Online Devices</p>
+                      <p className="summary-value">{adminStats.onlineDevices}</p>
+                    </article>
+                    <article className="summary-card">
+                      <p className="summary-label">Drive Files</p>
+                      <p className="summary-value">{adminStats.totalFiles}</p>
+                    </article>
+                    <article className="summary-card">
+                      <p className="summary-label">Drive Folders</p>
+                      <p className="summary-value">{adminStats.totalFolders}</p>
+                    </article>
+                    <article className="summary-card">
+                      <p className="summary-label">Storage Pooled</p>
+                      <p className="summary-value">{adminStats.totalStorageGb.toFixed(0)} <span style={{ fontSize: '0.75em', opacity: 0.7 }}>GB</span></p>
+                    </article>
+                    <article className="summary-card">
+                      <p className="summary-label">Fidus Convos</p>
+                      <p className="summary-value">{adminStats.totalConversations}</p>
+                    </article>
+                    <article className="summary-card">
+                      <p className="summary-label">Fidus Messages</p>
+                      <p className="summary-value">{adminStats.totalMessages}</p>
+                    </article>
+                  </section>
+
+                  <section className="admin-users-section">
+                    <p className="section-title">Users</p>
+                    <div className="admin-user-list">
+                      {adminStats.users.map((u) => (
+                        <div key={u.id} className="admin-user-row">
+                          <div className="admin-user-info">
+                            <span className="admin-user-name">{u.name}</span>
+                            <span className="admin-user-email">{u.email}</span>
+                          </div>
+                          <div className="admin-user-actions">
+                            <span className={u.role === 'admin' ? 'admin-role-badge admin-role-badge--admin' : 'admin-role-badge'}>{u.role}</span>
+                            {u.id !== userId && (
+                              <button
+                                className="mini-button"
+                                type="button"
+                                onClick={async () => {
+                                  const newRole = u.role === 'admin' ? 'user' : 'admin'
+                                  const res = await apiFetch(`/api/admin/users/${u.id}/role`, {
+                                    method: 'PATCH',
+                                    body: JSON.stringify({ role: newRole }),
+                                  })
+                                  if (res.ok) loadAdminStats()
+                                }}
+                              >
+                                {u.role === 'admin' ? 'Remove Admin' : 'Make Admin'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                </>
+              )}
+            </section>
+          </div>
+        </section>
+      </main>
+    )
+  }
+
+  if (view === 'theme') {
+    const accentOptions = [
+      { id: 'pink', label: 'Pink', color: '#d946ef' },
+      { id: 'violet', label: 'Violet', color: '#8b5cf6' },
+      { id: 'blue', label: 'Blue', color: '#3b82f6' },
+      { id: 'cyan', label: 'Cyan', color: '#06b6d4' },
+      { id: 'green', label: 'Green', color: '#10b981' },
+      { id: 'orange', label: 'Orange', color: '#f59e0b' },
+    ]
+
+    return (
+      <main className="layout">
+        <section className="launcher-shell">
+          <div className="launcher-layout">
+            {renderSidebar()}
+            <section className="launcher-main">
+              <header className="launcher-header">
+                <button type="button" className="back-btn" onClick={() => setView('launcher')} aria-label="Back to launcher">←</button>
+                <div>
+                  <p className="kicker">Customization</p>
+                  <h1>Theme</h1>
+                  <p className="lead">Personalize the Zenith UI to match your taste. Changes are saved automatically.</p>
+                </div>
+              </header>
+
+              <section className="theme-section">
+                <p className="section-title">Mode</p>
+                <div className="theme-mode-row">
+                  {(['dark', 'light'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      className={themeMode === m ? 'theme-mode-card selected' : 'theme-mode-card'}
+                      onClick={() => setThemeMode(m)}
+                    >
+                      <span className="theme-mode-icon">{m === 'dark' ? '🌙' : '☀️'}</span>
+                      <span className="theme-mode-label">{m === 'dark' ? 'Dark' : 'Light'}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="theme-section">
+                <p className="section-title">Accent Color</p>
+                <div className="theme-accent-row">
+                  {accentOptions.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      className={themeAccent === a.id ? 'theme-accent-swatch selected' : 'theme-accent-swatch'}
+                      style={{ '--swatch-color': a.color } as React.CSSProperties}
+                      onClick={() => setThemeAccent(a.id)}
+                      aria-label={a.label}
+                      title={a.label}
+                    />
+                  ))}
+                </div>
+              </section>
+            </section>
+          </div>
+        </section>
+      </main>
+    )
+  }
+
   if (view === 'launcher') {
     return (
       <main className="layout">
@@ -3189,7 +3425,7 @@ function App() {
               )}
 
               <section className="app-grid" aria-label="Available Zenith apps">
-                {appTiles.map((app) => (
+                {appTiles.filter((app) => !app.adminOnly || userRole === 'admin').map((app) => (
                   <button
                     key={app.id}
                     className="app-tile"
@@ -3256,6 +3492,19 @@ function App() {
                         setSettingsMsg('')
                         setStatus('')
                         setView('settings')
+                        return
+                      }
+
+                      if (app.id === 'theme') {
+                        setStatus('')
+                        setView('theme')
+                        return
+                      }
+
+                      if (app.id === 'admin') {
+                        setStatus('')
+                        setView('admin')
+                        loadAdminStats()
                         return
                       }
 
