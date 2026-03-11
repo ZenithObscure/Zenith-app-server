@@ -359,6 +359,7 @@ function App() {
   )
   const [hiveQuery, setHiveQuery] = useState('Generate a deployment plan and split subtasks for parallel processing.')
   const [hiveAssignments, setHiveAssignments] = useState<HiveAssignment[]>([])
+  const [hiveAnswer, setHiveAnswer] = useState('')
   const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [notifUnreadCount, setNotifUnreadCount] = useState(0)
   const [notifPanelOpen, setNotifPanelOpen] = useState(false)
@@ -944,9 +945,11 @@ function App() {
       assignments: HiveAssignment[]
       totalReward: number
       tokenBalance: number
+      answer?: string
     }
 
     setHiveAssignments(payload.assignments)
+    setHiveAnswer(payload.answer ?? '')
     setTokenBalance(payload.tokenBalance)
     setStatusKind('success')
     setStatus(
@@ -1324,6 +1327,82 @@ function App() {
     }).catch(() => {})
     setStatus('')
     setView('desktop')
+  }
+
+  const renderMarkdown = (text: string): ReactElement => {
+    // Split into code-block and normal segments
+    const segments: Array<{ type: 'code'; lang: string; content: string } | { type: 'text'; content: string }> = []
+    const codeBlockRe = /```(\w*)\n?([\s\S]*?)```/g
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = codeBlockRe.exec(text)) !== null) {
+      if (match.index > lastIndex) segments.push({ type: 'text', content: text.slice(lastIndex, match.index) })
+      segments.push({ type: 'code', lang: match[1] ?? '', content: match[2] ?? '' })
+      lastIndex = match.index + match[0].length
+    }
+    if (lastIndex < text.length) segments.push({ type: 'text', content: text.slice(lastIndex) })
+
+    const renderInline = (s: string): Array<ReactElement | string> => {
+      // Bold: **text** or __text__
+      const parts = s.split(/(\*\*[\s\S]+?\*\*|__[\s\S]+?__)/g)
+      return parts.map((part, i) => {
+        if (/^(\*\*|__)/.test(part) && /(\*\*|__)$/.test(part)) {
+          return <strong key={i}>{part.slice(2, -2)}</strong>
+        }
+        // Inline code: `code`
+        const codeParts = part.split(/(`[^`]+`)/g)
+        if (codeParts.length > 1) {
+          return (
+            <span key={i}>
+              {codeParts.map((cp, j) =>
+                cp.startsWith('`') && cp.endsWith('`')
+                  ? <code key={j} className="fidus-inline-code">{cp.slice(1, -1)}</code>
+                  : cp,
+              )}
+            </span>
+          )
+        }
+        return part
+      })
+    }
+
+    const renderTextSegment = (text: string, segIdx: number): ReactElement => {
+      const lines = text.split('\n')
+      const nodes: ReactElement[] = []
+      let i = 0
+      while (i < lines.length) {
+        const line = lines[i]!
+        if (/^(\s*[-*+]|\s*\d+\.) /.test(line)) {
+          // Collect list items
+          const listItems: string[] = []
+          while (i < lines.length && /^(\s*[-*+]|\s*\d+\.) /.test(lines[i]!)) {
+            listItems.push(lines[i]!.replace(/^(\s*[-*+]|\s*\d+\.) /, ''))
+            i++
+          }
+          nodes.push(
+            <ul key={`${segIdx}-ul-${nodes.length}`} className="fidus-md-list">
+              {listItems.map((item, j) => <li key={j}>{renderInline(item)}</li>)}
+            </ul>,
+          )
+        } else if (line.trim() === '') {
+          i++
+        } else {
+          nodes.push(<p key={`${segIdx}-p-${nodes.length}`}>{renderInline(line)}</p>)
+          i++
+        }
+      }
+      return <>{nodes}</>
+    }
+
+    return (
+      <>
+        {segments.map((seg, idx) =>
+          seg.type === 'code'
+            ? <pre key={idx} className="fidus-code-block"><code className={seg.lang ? `language-${seg.lang}` : ''}>{seg.content.trimEnd()}</code></pre>
+            : <span key={idx}>{renderTextSegment(seg.content, idx)}</span>,
+        )}
+      </>
+    )
   }
 
   const renderDriveTree = (parentId: string | null, depth = 0): ReactElement[] => {
@@ -2289,7 +2368,7 @@ function App() {
                       >
                         <p className="fidus-role">{message.role === 'user' ? 'You' : 'Fidus'}</p>
                         {message.text
-                          ? <p>{message.text}</p>
+                          ? <div className="fidus-bubble-content">{renderMarkdown(message.text)}</div>
                           : <p className="fidus-typing"><span /><span /><span /></p>
                         }
                       </article>
@@ -2540,6 +2619,12 @@ function App() {
                               </li>
                             ))}
                           </ul>
+                          {hiveAnswer && (
+                            <div className="hive-answer-block">
+                              <h4>AI Response</h4>
+                              <p className="hive-answer-text">{hiveAnswer}</p>
+                            </div>
+                          )}
                         </>
                       )}
                     </>

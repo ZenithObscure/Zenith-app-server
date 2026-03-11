@@ -970,7 +970,7 @@ app.delete('/api/drive/:id', requireAuth, (req: AuthRequest, res) => {
   res.status(204).send()
 })
 
-app.post('/api/hivemind/dispatch', requireAuth, (req: AuthRequest, res) => {
+app.post('/api/hivemind/dispatch', requireAuth, async (req: AuthRequest, res) => {
   const userId = req.userId!
   const parsed = hiveSchema.safeParse(req.body)
   if (!parsed.success) {
@@ -1028,7 +1028,37 @@ app.post('/api/hivemind/dispatch', requireAuth, (req: AuthRequest, res) => {
 
   tx()
 
-  res.json({ assignments, totalReward, tokenBalance: nextTokenBalance })
+  // Call AI with the query and return the generated answer
+  let answer = ''
+  const apiKey = process.env.OPENAI_API_KEY
+  if (apiKey) {
+    try {
+      const { default: OpenAI } = await import('openai')
+      const openai = new OpenAI({ apiKey })
+      const completion = await openai.chat.completions.create({
+        model: process.env.OPENAI_MODEL ?? 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are Fidus, the Zenith AI. You are answering a query distributed across the HiveMind compute network. ' +
+              'Be concise and technically precise.',
+          },
+          { role: 'user', content: parsed.data.query },
+        ],
+        max_tokens: 800,
+        temperature: 0.7,
+      })
+      answer = completion.choices[0]?.message?.content ?? ''
+    } catch {
+      answer = ''
+    }
+  }
+  if (!answer) {
+    answer = buildFallbackResponse(parsed.data.query)
+  }
+
+  res.json({ assignments, totalReward, tokenBalance: nextTokenBalance, answer })
 })
 
 app.get('/api/conversations', requireAuth, (req: AuthRequest, res) => {
@@ -1484,6 +1514,20 @@ app.post('/api/fidus/chat', requireAuth, async (req: AuthRequest, res) => {
     res.end()
   }
 
+  // Load user memories to inject into the system prompt
+  const memories = db.prepare(
+    'SELECT content FROM fidus_memories WHERE user_id = ? ORDER BY created_at DESC LIMIT 20',
+  ).all(userId) as Array<{ content: string }>
+  const memoryBlock = memories.length > 0
+    ? '\n\nThings to always remember about this user:\n' + memories.map((m) => `- ${m.content}`).join('\n')
+    : ''
+
+  const systemPrompt =
+    'You are Fidus, a helpful AI assistant built into the Zenith desktop platform. ' +
+    'You are concise, technically sharp, and friendly. ' +
+    'Help the user with their Zenith workspace, code, planning, and any other questions.' +
+    memoryBlock
+
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) {
     // Fallback: smart canned response (no API key configured)
@@ -1506,13 +1550,7 @@ app.post('/api/fidus/chat', requireAuth, async (req: AuthRequest, res) => {
 
     // Convert our message format to OpenAI format
     const oaiMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
-      {
-        role: 'system',
-        content:
-          'You are Fidus, a helpful AI assistant built into the Zenith desktop platform. ' +
-          'You are concise, technically sharp, and friendly. ' +
-          'Help the user with their Zenith workspace, code, planning, and any other questions.',
-      },
+      { role: 'system', content: systemPrompt },
     ]
     for (const m of messages) {
       if (m.role === 'user') oaiMessages.push({ role: 'user', content: m.text })
