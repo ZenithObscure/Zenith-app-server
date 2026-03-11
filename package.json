@@ -20,7 +20,8 @@
     "dist:electron:win": "npm run build:electron-all && electron-builder --win",
     "dist:electron:mac": "npm run build:electron-all && electron-builder --mac",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "download-model": "node scripts/download-model.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -32,6 +33,7 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
+    "node-llama-cpp": "^3.17.1",
     "openai": "^6.27.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

@@ -32,3 +32,4 @@ electron-dist/
 *.sln
 *.sw?
 *.out
+*.gguf\n*.gguf.gz

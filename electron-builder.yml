@@ -9,8 +9,13 @@ extraMetadata:
   dependencies:
     electron-updater: "^6.3.0"
 
-# Skip native module rebuilding (better-sqlite3 stays server-side)
+# Skip native module rebuilding (better-sqlite3 stays server-side;
+# node-llama-cpp uses its own prebuilt binaries — no rebuild needed)
 npmRebuild: false
+
+# node-llama-cpp native binaries must NOT be packed inside the asar archive
+asarUnpack:
+  - "node_modules/node-llama-cpp/**"
 
 publish:
   - provider: github
@@ -38,8 +43,11 @@ files:
   - node_modules/lazy-val/**
   - node_modules/lodash.isequal/**
   - node_modules/lodash.isarray/**
+  # Local LLM — include the native binaries (unpacked from asar via asarUnpack above)
+  - node_modules/node-llama-cpp/**
 
 # Extra files copied into <resources>/ inside the packaged app
+# The compressed model (fidus.gguf.gz) is placed at resources/model/
 extraResources:
   - from: electron/resources
     to: .

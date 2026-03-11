@@ -355,6 +355,40 @@ function App() {
     return () => window.electronAPI?.removeAllListeners()
   }, [])
 
+  // Local model status — check on mount, decompress proactively once auth is ready
+  useEffect(() => {
+    if (!window.electronAPI) return
+
+    const cleanupProgress = window.electronAPI.onFidusModelProgress((p) => {
+      setFidusModelPct(p.progress)
+      setFidusModelMsg(p.message)
+      if (p.phase === 'done') {
+        setFidusLocalModel('ready')
+      } else if (p.phase === 'loading') {
+        setFidusLocalModel('loading')
+      } else {
+        setFidusLocalModel('extracting')
+      }
+    })
+
+    window.electronAPI.fidusGetModelStatus().then((status) => {
+      if (status.isModelUnpacked) {
+        setFidusLocalModel('ready')
+      } else if (status.isModelBundled) {
+        // Start decompression now so it's ready before the user opens Fidus
+        setFidusLocalModel('extracting')
+        window.electronAPI!.fidusInit().catch(() => {
+          setFidusLocalModel('missing')
+        })
+      } else {
+        setFidusLocalModel('missing')
+      }
+    })
+
+    return cleanupProgress
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Electron device heartbeat — register once then ping every 30 s with live stats
   useEffect(() => {
     if (!window.electronAPI || !authToken) return
@@ -445,6 +479,11 @@ function App() {
   const [hiveSettingsLocked, setHiveSettingsLocked] = useState(false)
   const [driveFileMenuId, setDriveFileMenuId] = useState<string | null>(null)
   const [fidusStreaming, setFidusStreaming] = useState(false)
+  const [fidusLocalModel, setFidusLocalModel] = useState<
+    'unknown' | 'missing' | 'extracting' | 'loading' | 'ready'
+  >('unknown')
+  const [fidusModelPct, setFidusModelPct] = useState(0)
+  const [fidusModelMsg, setFidusModelMsg] = useState('')
   const [heartbeatDeviceId, setHeartbeatDeviceId] = useState<string | null>(() =>
     localStorage.getItem('zenith_electron_device_id'),
   )
@@ -1069,6 +1108,76 @@ function App() {
     setFidusStreaming(true)
 
     let fullText = ''
+
+    // ── Electron: stream from local model ─────────────────────────────────────
+    if (window.electronAPI && fidusLocalModel === 'ready') {
+      const convId = activeFidusConvId  // capture before async work
+
+      await new Promise<void>((resolve) => {
+        const cleanup = window.electronAPI!.onFidusToken(({ convId: tokenConvId, chunk, done, fullText: ft, error }) => {
+          if (tokenConvId !== convId) return
+
+          if (error) {
+            fullText = 'Sorry, the local AI had an error. Please try again.'
+            setFidusConversations((prev) =>
+              prev.map((conv) =>
+                conv.id === convId
+                  ? { ...conv, messages: conv.messages.map((m) => m.id === fidusMsgId ? { ...m, text: fullText } : m) }
+                  : conv,
+              ),
+            )
+            cleanup()
+            setFidusStreaming(false)
+            resolve()
+            return
+          }
+
+          if (!done) {
+            fullText += chunk
+            const snapshot = fullText
+            setFidusConversations((prev) =>
+              prev.map((conv) =>
+                conv.id === convId
+                  ? { ...conv, messages: conv.messages.map((m) => m.id === fidusMsgId ? { ...m, text: snapshot } : m) }
+                  : conv,
+              ),
+            )
+          } else {
+            fullText = ft ?? fullText
+            cleanup()
+            setFidusStreaming(false)
+            resolve()
+          }
+        })
+
+        // Kick off inference — tokens arrive via IPC push events above
+        window.electronAPI!
+          .fidusChat(convId, [...history, { role: 'user', text: nextText }])
+          .catch((err: unknown) => {
+            cleanup()
+            fullText = `Sorry — ${String(err)}`
+            setFidusConversations((prev) =>
+              prev.map((conv) =>
+                conv.id === convId
+                  ? { ...conv, messages: conv.messages.map((m) => m.id === fidusMsgId ? { ...m, text: fullText } : m) }
+                  : conv,
+              ),
+            )
+            setFidusStreaming(false)
+            resolve()
+          })
+      })
+
+      apiFetch(`/api/conversations/${activeFidusConvId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({
+          messages: [userMessage, { id: fidusMsgId, role: 'fidus', text: fullText }],
+        }),
+      }).catch(() => {})
+      return
+    }
+
+    // ── Web (or model not yet ready): stream from backend API ─────────────────
     try {
       const res = await fetch(`${API_BASE}/api/fidus/chat`, {
         method: 'POST',
@@ -1104,7 +1213,6 @@ function App() {
               fullText = payload.fullText ?? fullText
             } else if (payload.chunk) {
               fullText += payload.chunk
-              // snapshot to avoid closure staleness
               const snapshot = fullText
               setFidusConversations((prev) =>
                 prev.map((conv) =>
@@ -1140,7 +1248,6 @@ function App() {
       setFidusStreaming(false)
     }
 
-    // Persist both messages to backend
     apiFetch(`/api/conversations/${activeFidusConvId}/messages`, {
       method: 'POST',
       body: JSON.stringify({
@@ -2093,6 +2200,29 @@ function App() {
 
                 {/* Chat Area */}
                 <div className="fidus-chat-area">
+                  {/* Local model status banner — Electron only */}
+                  {window.electronAPI && fidusLocalModel !== 'unknown' && (
+                    <div
+                      className={`fidus-model-banner ${fidusLocalModel === 'ready' ? 'fidus-model-banner--ready' : fidusLocalModel === 'missing' ? 'fidus-model-banner--missing' : ''}`}
+                    >
+                      {fidusLocalModel === 'ready' ? (
+                        <span className="fidus-model-badge">⚡ Local AI</span>
+                      ) : fidusLocalModel === 'missing' ? (
+                        <span>Using cloud AI — run <code>npm run download-model</code> to enable local inference</span>
+                      ) : (
+                        <>
+                          <span>{fidusModelMsg || 'Preparing local AI model…'}</span>
+                          <div className="fidus-model-progress-bar">
+                            <div
+                              className="fidus-model-progress-fill"
+                              style={{ width: `${fidusModelPct}%` }}
+                            />
+                          </div>
+                          <span className="fidus-model-pct">{fidusModelPct}%</span>
+                        </>
+                      )}
+                    </div>
+                  )}
                   <section className="fidus-thread" aria-label="Fidus conversation" ref={fidusThreadRef}>
                     {fidusMessages.map((message) => (
                       <article

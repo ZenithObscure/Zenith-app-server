@@ -13,6 +13,13 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import os from 'os'
 import fs from 'fs'
+import {
+  decompressModel,
+  isModelUnpacked,
+  isModelBundled,
+  streamChat,
+  type FidusMessage,
+} from './llm.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -264,6 +271,66 @@ ipcMain.handle('show-window', () => {
   mainWindow?.show()
   mainWindow?.focus()
 })
+
+// ─── Local LLM (Fidus AI) ─────────────────────────────────────────────────────
+
+ipcMain.handle('fidus-model-status', () => ({
+  isModelUnpacked: isModelUnpacked(),
+  isModelBundled: isModelBundled(),
+}))
+
+/** Proactively decompress the model (triggered when user opens Fidus view). */
+ipcMain.handle('fidus-init', async () => {
+  await decompressModel((progress, message) => {
+    mainWindow?.webContents.send('fidus-model-progress', {
+      progress,
+      message,
+      phase: progress < 100 ? 'decompressing' : 'done',
+    })
+  })
+})
+
+/**
+ * Run a streaming inference request.
+ * Tokens arrive via 'fidus-token' IPC push events; this invoke resolves
+ * once inference is complete (or throws on error).
+ */
+ipcMain.handle(
+  'fidus-chat',
+  async (
+    _event,
+    { convId, messages }: { convId: string; messages: FidusMessage[] },
+  ) => {
+    let fullText = ''
+    try {
+      fullText = await streamChat(
+        messages,
+        convId,
+        (chunk) => {
+          mainWindow?.webContents.send('fidus-token', { convId, chunk, done: false })
+        },
+        (progress, message) => {
+          mainWindow?.webContents.send('fidus-model-progress', {
+            progress,
+            message,
+            phase: 'loading',
+          })
+        },
+      )
+      mainWindow?.webContents.send('fidus-token', { convId, chunk: '', done: true, fullText })
+    } catch (err) {
+      mainWindow?.webContents.send('fidus-token', {
+        convId,
+        chunk: '',
+        done: true,
+        fullText: '',
+        error: String(err),
+      })
+      throw err
+    }
+    return fullText
+  },
+)
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
