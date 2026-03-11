@@ -70,8 +70,6 @@ linux:
   target:
     - target: AppImage
       arch: [x64]
-    - target: deb
-      arch: [x64]
   icon: electron/resources/icon.png
   category: Office
 

@@ -3342,6 +3342,10 @@ function App() {
   }
 
   if (view === 'admin') {
+    if (userRole !== 'admin') {
+      setView('launcher')
+      return null
+    }
     return (
       <main className="layout">
         <section className="launcher-shell">
