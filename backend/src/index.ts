@@ -247,6 +247,33 @@ const initSchema = () => {
       FOREIGN KEY(from_user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY(to_user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT,
+      read INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS fidus_memories (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS device_pings (
+      device_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      last_ping INTEGER NOT NULL,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `)
 
   // Add new columns to drive_nodes if they don't exist
@@ -451,6 +478,12 @@ const readTokenBalance = (userId: string) => {
 
 const updateTokenBalance = (userId: string, nextValue: number) => {
   db.prepare('UPDATE app_state SET token_balance = ? WHERE user_id = ?').run(nextValue, userId)
+}
+
+const pushNotification = (userId: string, kind: string, title: string, body?: string) => {
+  db.prepare(
+    'INSERT INTO notifications (id, user_id, kind, title, body, read, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)',
+  ).run(`notif-${serial()}`, userId, kind, title, body ?? null, Date.now())
 }
 
 type ConvRow = { id: string; title: string }
@@ -905,6 +938,12 @@ app.post('/api/hivemind/dispatch', requireAuth, (req: AuthRequest, res) => {
     })
 
     updateTokenBalance(userId, nextTokenBalance)
+    pushNotification(
+      userId,
+      'hivemind_complete',
+      `HiveMind job complete — +${totalReward.toFixed(2)} tokens earned`,
+      `Distributed across ${assignments.length} device${assignments.length === 1 ? '' : 's'}.`,
+    )
   })
 
   tx()
@@ -1048,6 +1087,12 @@ app.post('/api/wallet/send', requireAuth, (req: AuthRequest, res) => {
     db.prepare(
       'INSERT INTO token_transactions (id, from_user_id, to_user_id, amount, note, created_at) VALUES (?, ?, ?, ?, ?, ?)'
     ).run(`tx-${serial()}`, userId, recipientRow.id, rounded, typeof note === 'string' ? note.slice(0, 200) : null, Date.now())
+    pushNotification(
+      recipientRow.id,
+      'token_received',
+      `You received ${rounded.toFixed(2)} tokens`,
+      `From ${senderRow?.name ?? 'someone'}${typeof note === 'string' && note.trim() ? ` — "${note.trim()}"` : ''}`,
+    )
   })
   tx()
 
@@ -1056,6 +1101,182 @@ app.post('/api/wallet/send', requireAuth, (req: AuthRequest, res) => {
     newBalance: Number((senderBalance - rounded).toFixed(2)),
     message: `Sent ${rounded.toFixed(2)} tokens to ${recipientRow.name}.`,
   })
+})
+
+// ── Account Settings ──────────────────────────────────────────────────────────
+app.get('/api/account', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const row = db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(userId) as
+    | { id: string; name: string; email: string } | undefined
+  if (!row) { res.status(404).json({ error: 'User not found' }); return }
+  res.json({ id: row.id, name: row.name, email: row.email })
+})
+
+app.patch('/api/account', requireAuth, async (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const { name, email, currentPassword, newPassword } = req.body as {
+    name?: unknown; email?: unknown; currentPassword?: unknown; newPassword?: unknown
+  }
+
+  const user = db.prepare('SELECT id, name, email, password FROM users WHERE id = ?').get(userId) as UserAccount | undefined
+  if (!user) { res.status(404).json({ error: 'User not found' }); return }
+
+  // Password change requires verifying current password
+  if (newPassword !== undefined) {
+    if (typeof currentPassword !== 'string') {
+      res.status(400).json({ error: 'currentPassword is required to set a new password' }); return
+    }
+    const valid = await bcrypt.compare(currentPassword, user.password)
+    if (!valid) { res.status(401).json({ error: 'wrong_password', message: 'Current password is incorrect.' }); return }
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      res.status(400).json({ error: 'New password must be at least 8 characters' }); return
+    }
+  }
+
+  const updates: string[] = []
+  const values: Array<string> = []
+
+  if (typeof name === 'string' && name.trim().length >= 2) {
+    updates.push('name = ?')
+    values.push(name.trim())
+  }
+  if (typeof email === 'string' && /\S+@\S+\.\S+/.test(email)) {
+    const emailLower = email.toLowerCase()
+    const taken = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(emailLower, userId)
+    if (taken) { res.status(409).json({ error: 'email_taken', message: 'That email is already in use.' }); return }
+    updates.push('email = ?')
+    values.push(emailLower)
+  }
+  if (typeof newPassword === 'string' && newPassword.length >= 8) {
+    const hashed = await bcrypt.hash(newPassword, 12)
+    updates.push('password = ?')
+    values.push(hashed)
+  }
+
+  if (updates.length === 0) { res.status(400).json({ error: 'No valid fields to update' }); return }
+
+  values.push(userId)
+  db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+
+  const updated = db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(userId) as { id: string; name: string; email: string }
+  res.json({ ok: true, name: updated.name, email: updated.email })
+})
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+app.get('/api/notifications', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const rows = db.prepare(
+    'SELECT id, kind, title, body, read, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 60',
+  ).all(userId) as Array<{ id: string; kind: string; title: string; body: string | null; read: number; created_at: number }>
+  res.json({
+    notifications: rows.map((r) => ({ ...r, read: r.read === 1 })),
+    unreadCount: rows.filter((r) => r.read === 0).length,
+  })
+})
+
+app.patch('/api/notifications/read-all', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ?').run(userId)
+  res.json({ ok: true })
+})
+
+app.delete('/api/notifications/:id', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  db.prepare('DELETE FROM notifications WHERE id = ? AND user_id = ?').run(req.params.id, userId)
+  res.json({ ok: true })
+})
+
+// ── Dashboard stats ───────────────────────────────────────────────────────────
+app.get('/api/dashboard', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const devs = readDevices(userId)
+  const nodes = readDriveNodes(userId)
+  const balance = readTokenBalance(userId)
+  const totalStorageGb = devs.reduce((s, d) => s + d.storageContributionGb, 0)
+  const usedBytes = (nodes.filter((n) => n.sizeBytes != null) as Array<DriveNode & { sizeBytes: number }>)
+    .reduce((s, n) => s + n.sizeBytes, 0)
+  const fileCount = nodes.filter((n) => n.kind === 'file').length
+  const onlineDevices = devs.filter((d) => d.status === 'Online').length
+  const unread = (db.prepare('SELECT COUNT(*) as c FROM notifications WHERE user_id = ? AND read = 0').get(userId) as { c: number }).c
+  const recentConvs = db.prepare(
+    'SELECT title, created_at FROM fidus_conversations WHERE user_id = ? ORDER BY created_at DESC LIMIT 3',
+  ).all(userId) as Array<{ title: string; created_at: number }>
+
+  res.json({
+    tokenBalance: balance,
+    totalStorageGb,
+    usedStorageBytes: usedBytes,
+    fileCount,
+    onlineDevices,
+    totalDevices: devs.length,
+    unreadNotifications: unread,
+    recentConversations: recentConvs,
+  })
+})
+
+// ── Device heartbeat ──────────────────────────────────────────────────────────
+app.post('/api/devices/:id/ping', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const deviceRow = db.prepare('SELECT id FROM devices WHERE id = ? AND user_id = ?').get(req.params.id, userId)
+  if (!deviceRow) { res.status(404).json({ error: 'Device not found' }); return }
+
+  const now = Date.now()
+  db.prepare(
+    `INSERT INTO device_pings (device_id, user_id, last_ping) VALUES (?, ?, ?)
+     ON CONFLICT(device_id) DO UPDATE SET last_ping = excluded.last_ping`,
+  ).run(req.params.id, userId, now)
+
+  // Mark online
+  db.prepare("UPDATE devices SET status = 'Online' WHERE id = ? AND user_id = ?").run(req.params.id, userId)
+  res.json({ ok: true, lastPing: now })
+})
+
+// Sweep stale devices (>5 min since last ping → Offline)
+app.post('/api/devices/sweep', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const staleThreshold = Date.now() - 5 * 60 * 1000
+  const stale = db.prepare(
+    `SELECT d.id FROM devices d
+     LEFT JOIN device_pings dp ON d.id = dp.device_id
+     WHERE d.user_id = ? AND d.status = 'Online'
+     AND (dp.last_ping IS NULL OR dp.last_ping < ?)`,
+  ).all(userId, staleThreshold) as Array<{ id: string }>
+
+  if (stale.length > 0) {
+    const ids = stale.map((r) => r.id)
+    const placeholders = ids.map(() => '?').join(', ')
+    db.prepare(`UPDATE devices SET status = 'Offline' WHERE id IN (${placeholders})`).run(...ids)
+  }
+
+  res.json({ swept: stale.length })
+})
+
+// ── Fidus Memory ──────────────────────────────────────────────────────────────
+app.get('/api/fidus/memories', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const rows = db.prepare(
+    'SELECT id, content, created_at FROM fidus_memories WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
+  ).all(userId) as Array<{ id: string; content: string; created_at: number }>
+  res.json({ memories: rows })
+})
+
+app.post('/api/fidus/memories', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  const { content } = req.body as { content?: unknown }
+  if (typeof content !== 'string' || !content.trim()) {
+    res.status(400).json({ error: 'content is required' }); return
+  }
+  const id = `mem-${serial()}`
+  db.prepare('INSERT INTO fidus_memories (id, user_id, content, created_at) VALUES (?, ?, ?, ?)').run(
+    id, userId, content.trim().slice(0, 500), Date.now(),
+  )
+  res.status(201).json({ memory: { id, content: content.trim().slice(0, 500), createdAt: Date.now() } })
+})
+
+app.delete('/api/fidus/memories/:id', requireAuth, (req: AuthRequest, res) => {
+  const userId = req.userId!
+  db.prepare('DELETE FROM fidus_memories WHERE id = ? AND user_id = ?').run(req.params.id, userId)
+  res.json({ ok: true })
 })
 
 app.get('/api/updates/latest', (_req, res) => {

@@ -2,7 +2,7 @@ import './styles.css'
 import { ChangeEvent, FormEvent, ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type AuthMode = 'login' | 'signup'
-type ViewMode = 'auth' | 'launcher' | 'devices' | 'drive' | 'fidus' | 'photo-album' | 'hivemind' | 'storage' | 'engine' | 'wallet' | 'desktop'
+type ViewMode = 'auth' | 'launcher' | 'devices' | 'drive' | 'fidus' | 'photo-album' | 'hivemind' | 'storage' | 'engine' | 'wallet' | 'desktop' | 'settings'
 type StatusKind = 'error' | 'success'
 type DeviceStatus = 'Online' | 'Offline'
 type DeviceType = 'Laptop' | 'Stationary' | 'Phone' | 'Other'
@@ -72,6 +72,28 @@ type WalletTransaction = {
   note: string | null
   createdAt: number
   counterpartName: string
+}
+
+type AppNotification = {
+  id: string
+  kind: string
+  title: string
+  body: string | null
+  read: boolean
+  created_at: number
+}
+
+type FidusMemory = { id: string; content: string; created_at: number }
+
+type DashboardStats = {
+  tokenBalance: number
+  totalStorageGb: number
+  usedStorageBytes: number
+  fileCount: number
+  onlineDevices: number
+  totalDevices: number
+  unreadNotifications: number
+  recentConversations: Array<{ title: string; created_at: number }>
 }
 
 type ApiState = {
@@ -192,6 +214,16 @@ const appTiles: AppTile[] = [
       </svg>
     ),
   },
+  {
+    id: 'settings',
+    name: 'Account Settings',
+    description: 'Change your display name, email address, and password.',
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm0 9c4.4 0 8 1.8 8 4v2H4v-2c0-2.2 3.6-4 8-4Z" />
+      </svg>
+    ),
+  },
 ]
 
 const starterDevices: DeviceInfo[] = [
@@ -280,6 +312,20 @@ function App() {
   )
   const [hiveQuery, setHiveQuery] = useState('Generate a deployment plan and split subtasks for parallel processing.')
   const [hiveAssignments, setHiveAssignments] = useState<HiveAssignment[]>([])
+  const [notifications, setNotifications] = useState<AppNotification[]>([])
+  const [notifUnreadCount, setNotifUnreadCount] = useState(0)
+  const [notifPanelOpen, setNotifPanelOpen] = useState(false)
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null)
+  const [drivePreviewNode, setDrivePreviewNode] = useState<DriveNode | null>(null)
+  const [fidusMemories, setFidusMemories] = useState<FidusMemory[]>([])
+  const [newMemoryInput, setNewMemoryInput] = useState('')
+  const [settingsName, setSettingsName] = useState('')
+  const [settingsEmail, setSettingsEmail] = useState('')
+  const [settingsCurrentPw, setSettingsCurrentPw] = useState('')
+  const [settingsNewPw, setSettingsNewPw] = useState('')
+  const [settingsSaving, setSettingsSaving] = useState(false)
+  const [settingsMsg, setSettingsMsg] = useState('')
+  const [settingsMsgKind, setSettingsMsgKind] = useState<StatusKind>('success')
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const fidusThreadRef = useRef<HTMLElement | null>(null)
 
@@ -354,6 +400,8 @@ function App() {
   const persistAuthSession = (payload: AuthResponse) => {
     setAccountName(payload.name)
     setAccountEmail(payload.email)
+    setSettingsName(payload.name)
+    setSettingsEmail(payload.email)
     setAuthToken(payload.token)
     localStorage.setItem('zenith_auth_token', payload.token)
   }
@@ -405,12 +453,34 @@ function App() {
     setWalletTransactions(data.transactions)
   }, [apiFetch])
 
+  const loadNotifications = useCallback(async (tokenOverride?: string) => {
+    const res = await apiFetch('/api/notifications', {}, tokenOverride)
+    if (!res.ok) return
+    const data = (await res.json()) as { notifications: AppNotification[]; unreadCount: number }
+    setNotifications(data.notifications)
+    setNotifUnreadCount(data.unreadCount)
+  }, [apiFetch])
+
+  const loadDashboard = useCallback(async (tokenOverride?: string) => {
+    const res = await apiFetch('/api/dashboard', {}, tokenOverride)
+    if (!res.ok) return
+    const data = (await res.json()) as DashboardStats
+    setDashboardStats(data)
+  }, [apiFetch])
+
+  const loadFidusMemories = useCallback(async (tokenOverride?: string) => {
+    const res = await apiFetch('/api/fidus/memories', {}, tokenOverride)
+    if (!res.ok) return
+    const data = (await res.json()) as { memories: FidusMemory[] }
+    setFidusMemories(data.memories)
+  }, [apiFetch])
+
   useEffect(() => {
     if (!authToken) {
       return
     }
 
-    Promise.all([loadApiState(), loadFidusConversations(), loadWallet()])
+    Promise.all([loadApiState(), loadFidusConversations(), loadWallet(), loadNotifications(), loadDashboard(), loadFidusMemories()])
       .then(() => {
         setView('launcher')
       })
@@ -420,7 +490,7 @@ function App() {
         setStatusKind('error')
         setStatus('Session restore failed. Please log in again and ensure backend API is running.')
       })
-  }, [authToken, loadApiState, loadFidusConversations, loadWallet])
+  }, [authToken, loadApiState, loadFidusConversations, loadWallet, loadNotifications, loadDashboard, loadFidusMemories])
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -467,7 +537,7 @@ function App() {
     const payload = (await response.json()) as AuthResponse
     persistAuthSession(payload)
     try {
-      await Promise.all([loadApiState(payload.token), loadFidusConversations(payload.token), loadWallet(payload.token)])
+      await Promise.all([loadApiState(payload.token), loadFidusConversations(payload.token), loadWallet(payload.token), loadNotifications(payload.token), loadDashboard(payload.token), loadFidusMemories(payload.token)])
     } catch {
       // State will load on next render via useEffect
     }
@@ -535,7 +605,7 @@ function App() {
     const payload = (await response.json()) as AuthResponse
     persistAuthSession(payload)
     try {
-      await Promise.all([loadApiState(payload.token), loadFidusConversations(payload.token), loadWallet(payload.token)])
+      await Promise.all([loadApiState(payload.token), loadFidusConversations(payload.token), loadWallet(payload.token), loadNotifications(payload.token), loadDashboard(payload.token), loadFidusMemories(payload.token)])
     } catch {
       // State will load on next render via useEffect
     }
@@ -705,6 +775,11 @@ function App() {
     localStorage.removeItem('zenith_auth_token')
     setAccountName('Zenith User')
     setAccountEmail('not-set@zenith-app.net')
+    setNotifications([])
+    setNotifUnreadCount(0)
+    setNotifPanelOpen(false)
+    setDashboardStats(null)
+    setFidusMemories([])
     setView('auth')
     setMode('login')
     setLoginEmail('')
@@ -980,11 +1055,11 @@ function App() {
               <button
                 className="mini-button"
                 type="button"
-                onClick={() => {
-                  setView('photo-album')
+                onClick={async () => {
+                  setDrivePreviewNode(node)
                 }}
               >
-                Open
+                Preview
               </button>
             )}
             <div className="tree-menu-wrap">
@@ -1061,11 +1136,26 @@ function App() {
     <aside className="account-sidebar" aria-label="Account and device information">
       <div className="sidebar-toprow">
         <p className="kicker">Account</p>
-        {view !== 'launcher' && view !== 'auth' && (
-          <button className="sidebar-back-btn" type="button" onClick={() => setView('launcher')}>
-            ← Launcher
+        <div className="sidebar-toprow-actions">
+          <button
+            className="notif-bell-btn"
+            type="button"
+            aria-label={`Notifications${notifUnreadCount > 0 ? ` (${notifUnreadCount} unread)` : ''}`}
+            onClick={() => setNotifPanelOpen((p) => !p)}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" className="notif-bell-icon">
+              <path d="M12 2a7 7 0 0 0-7 7v3.5l-1.7 2.5A1 1 0 0 0 4 17h16a1 1 0 0 0 .7-1.7L19 12.5V9a7 7 0 0 0-7-7Zm0 20a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2Z" />
+            </svg>
+            {notifUnreadCount > 0 && (
+              <span className="notif-badge">{notifUnreadCount > 9 ? '9+' : notifUnreadCount}</span>
+            )}
           </button>
-        )}
+          {view !== 'launcher' && view !== 'auth' && (
+            <button className="sidebar-back-btn" type="button" onClick={() => setView('launcher')}>
+              ← Launcher
+            </button>
+          )}
+        </div>
       </div>
       <h2>{accountName}</h2>
       <p className="sidebar-email">{accountEmail}</p>
@@ -1161,6 +1251,20 @@ function App() {
       </div>
 
       <div className="sidebar-bottom">
+        <button
+          className="secondary-button sidebar-full-btn"
+          type="button"
+          onClick={() => {
+            setSettingsName(accountName)
+            setSettingsEmail(accountEmail)
+            setSettingsCurrentPw('')
+            setSettingsNewPw('')
+            setSettingsMsg('')
+            setView('settings')
+          }}
+        >
+          Account Settings
+        </button>
         <button className="secondary-button sidebar-full-btn" type="button" onClick={handleOpenDesktopView}>
           {isWebRuntime ? 'Get Desktop App' : 'Desktop App & Updates'}
         </button>
@@ -1168,6 +1272,57 @@ function App() {
           Sign Out
         </button>
       </div>
+
+      {notifPanelOpen && (
+        <div className="notif-panel" role="dialog" aria-label="Notifications">
+          <div className="notif-panel-head">
+            <span className="notif-panel-title">Notifications</span>
+            <div className="notif-panel-actions">
+              {notifUnreadCount > 0 && (
+                <button
+                  className="mini-button"
+                  type="button"
+                  onClick={async () => {
+                    await apiFetch('/api/notifications/read-all', { method: 'PATCH' })
+                    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
+                    setNotifUnreadCount(0)
+                  }}
+                >
+                  Mark all read
+                </button>
+              )}
+              <button className="mini-button" type="button" onClick={() => setNotifPanelOpen(false)}>✕</button>
+            </div>
+          </div>
+          {notifications.length === 0 ? (
+            <p className="notif-empty">No notifications yet.</p>
+          ) : (
+            <ul className="notif-list">
+              {notifications.map((n) => (
+                <li key={n.id} className={n.read ? 'notif-item read' : 'notif-item'}>
+                  <div className="notif-item-body">
+                    <span className="notif-title">{n.title}</span>
+                    {n.body && <span className="notif-body">{n.body}</span>}
+                    <span className="notif-time">{new Date(n.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                  </div>
+                  <button
+                    className="notif-dismiss"
+                    type="button"
+                    aria-label="Dismiss"
+                    onClick={async () => {
+                      await apiFetch(`/api/notifications/${n.id}`, { method: 'DELETE' })
+                      setNotifications((prev) => prev.filter((x) => x.id !== n.id))
+                      setNotifUnreadCount((c) => Math.max(0, c - (n.read ? 0 : 1)))
+                    }}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </aside>
   )
 
@@ -1549,6 +1704,33 @@ function App() {
               )}
             </section>
           </div>
+
+          {drivePreviewNode && (
+            <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={`Preview ${drivePreviewNode.name}`} onClick={() => setDrivePreviewNode(null)}>
+              <div className="drive-preview-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="drive-preview-header">
+                  <span className="drive-preview-name">{drivePreviewNode.name}</span>
+                  <button className="mini-button" type="button" onClick={() => setDrivePreviewNode(null)}>✕ Close</button>
+                </div>
+                <div className="drive-preview-body">
+                  <img
+                    src={`${API_BASE}/api/drive/${drivePreviewNode.id}/content`}
+                    alt={drivePreviewNode.name}
+                    className="drive-preview-img"
+                    style={{ display: 'block', maxWidth: '100%', maxHeight: '65vh', margin: '0 auto', borderRadius: '8px' }}
+                    onError={(e) => {
+                      ;(e.target as HTMLImageElement).style.display = 'none'
+                      const el = (e.target as HTMLImageElement).nextElementSibling as HTMLElement | null
+                      if (el) el.style.display = 'block'
+                    }}
+                  />
+                  <p className="device-caption" style={{ display: 'none', textAlign: 'center', padding: '2rem' }}>
+                    Preview unavailable — the file may not have content yet.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
       </main>
     )
@@ -1557,6 +1739,24 @@ function App() {
   if (view === 'fidus') {
     const activeConv = fidusConversations.find((c) => c.id === activeFidusConvId) ?? fidusConversations[0]
     const fidusMessages = activeConv?.messages ?? []
+
+    const handleAddMemory = async () => {
+      const content = newMemoryInput.trim()
+      if (!content) return
+      const res = await apiFetch('/api/fidus/memories', {
+        method: 'POST',
+        body: JSON.stringify({ content }),
+      })
+      if (!res.ok) return
+      const data = (await res.json()) as { memory: FidusMemory }
+      setFidusMemories((prev) => [data.memory, ...prev])
+      setNewMemoryInput('')
+    }
+
+    const handleDeleteMemory = async (id: string) => {
+      await apiFetch(`/api/fidus/memories/${id}`, { method: 'DELETE' })
+      setFidusMemories((prev) => prev.filter((m) => m.id !== id))
+    }
 
     return (
       <main className="layout">
@@ -1613,6 +1813,40 @@ function App() {
                       )
                     })}
                   </ul>
+
+                  {/* Memory Panel */}
+                  <div className="fidus-memory-panel">
+                    <span className="fidus-history-title">Memories</span>
+                    <p className="device-caption" style={{ margin: '4px 0 8px' }}>Facts Fidus always remembers.</p>
+                    <div className="fidus-memory-input-row">
+                      <input
+                        type="text"
+                        placeholder="Add a memory…"
+                        value={newMemoryInput}
+                        maxLength={500}
+                        onChange={(e) => setNewMemoryInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddMemory() } }}
+                      />
+                      <button className="mini-button" type="button" onClick={handleAddMemory}>+</button>
+                    </div>
+                    {fidusMemories.length === 0 ? (
+                      <p className="device-caption" style={{ marginTop: '6px' }}>No memories yet.</p>
+                    ) : (
+                      <ul className="fidus-memory-list">
+                        {fidusMemories.map((m) => (
+                          <li key={m.id} className="fidus-memory-item">
+                            <span className="fidus-memory-text">{m.content}</span>
+                            <button
+                              className="notif-dismiss"
+                              type="button"
+                              aria-label="Delete memory"
+                              onClick={() => handleDeleteMemory(m.id)}
+                            >✕</button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 </aside>
 
                 {/* Chat Area */}
@@ -2395,6 +2629,139 @@ function App() {
     )
   }
 
+  if (view === 'settings') {
+    const handleSaveSettings = async (e: FormEvent<HTMLFormElement>) => {
+      e.preventDefault()
+      setSettingsSaving(true)
+      setSettingsMsg('')
+
+      const body: Record<string, string> = {}
+      if (settingsName.trim() && settingsName.trim() !== accountName) body.name = settingsName.trim()
+      if (settingsEmail.trim() && settingsEmail.trim() !== accountEmail) body.email = settingsEmail.trim()
+      if (settingsNewPw.trim()) {
+        body.newPassword = settingsNewPw
+        body.currentPassword = settingsCurrentPw
+      }
+
+      if (Object.keys(body).length === 0) {
+        setSettingsMsgKind('error')
+        setSettingsMsg('No changes detected.')
+        setSettingsSaving(false)
+        return
+      }
+
+      try {
+        const res = await apiFetch('/api/account', {
+          method: 'PATCH',
+          body: JSON.stringify(body),
+        })
+        const data = (await res.json()) as { ok?: boolean; name?: string; email?: string; error?: string; message?: string }
+        if (!res.ok) {
+          setSettingsMsgKind('error')
+          if (data.error === 'email_taken') setSettingsMsg('That email is already in use.')
+          else if (data.error === 'wrong_password') setSettingsMsg('Current password is incorrect.')
+          else setSettingsMsg(data.message ?? 'Update failed.')
+        } else {
+          if (data.name) { setAccountName(data.name); setSettingsName(data.name) }
+          if (data.email) { setAccountEmail(data.email); setSettingsEmail(data.email) }
+          setSettingsCurrentPw('')
+          setSettingsNewPw('')
+          setSettingsMsgKind('success')
+          setSettingsMsg('Settings saved.')
+        }
+      } catch {
+        setSettingsMsgKind('error')
+        setSettingsMsg('Could not reach server.')
+      } finally {
+        setSettingsSaving(false)
+      }
+    }
+
+    return (
+      <main className="layout">
+        <section className="launcher-shell">
+          <div className="launcher-layout">
+            {renderSidebar()}
+            <section className="launcher-main">
+              <header className="launcher-header">
+                <div>
+                  <p className="kicker">Account</p>
+                  <h1>Account Settings</h1>
+                  <p className="lead">Update your profile details and change your password.</p>
+                </div>
+              </header>
+
+              <form className="settings-form" onSubmit={handleSaveSettings}>
+                <section className="settings-section">
+                  <h2 className="settings-section-title">Profile</h2>
+                  <div className="settings-field">
+                    <label htmlFor="settings-name">Display Name</label>
+                    <input
+                      id="settings-name"
+                      type="text"
+                      value={settingsName}
+                      onChange={(e) => setSettingsName(e.target.value)}
+                      placeholder="Your name"
+                    />
+                  </div>
+                  <div className="settings-field">
+                    <label htmlFor="settings-email">Email Address</label>
+                    <input
+                      id="settings-email"
+                      type="email"
+                      value={settingsEmail}
+                      onChange={(e) => setSettingsEmail(e.target.value)}
+                      placeholder="you@example.com"
+                    />
+                  </div>
+                </section>
+
+                <section className="settings-section">
+                  <h2 className="settings-section-title">Change Password</h2>
+                  <p className="device-caption">Leave blank to keep your current password.</p>
+                  <div className="settings-field">
+                    <label htmlFor="settings-current-pw">Current Password</label>
+                    <input
+                      id="settings-current-pw"
+                      type="password"
+                      autoComplete="current-password"
+                      value={settingsCurrentPw}
+                      onChange={(e) => setSettingsCurrentPw(e.target.value)}
+                      placeholder="Required to set a new password"
+                    />
+                  </div>
+                  <div className="settings-field">
+                    <label htmlFor="settings-new-pw">New Password</label>
+                    <input
+                      id="settings-new-pw"
+                      type="password"
+                      autoComplete="new-password"
+                      value={settingsNewPw}
+                      onChange={(e) => setSettingsNewPw(e.target.value)}
+                      placeholder="At least 8 characters"
+                    />
+                  </div>
+                </section>
+
+                <div className="settings-actions">
+                  <button className="primary-button" type="submit" disabled={settingsSaving}>
+                    {settingsSaving ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </div>
+
+                {settingsMsg && (
+                  <p className={settingsMsgKind === 'success' ? 'status-message success' : 'status-message'}>
+                    {settingsMsg}
+                  </p>
+                )}
+              </form>
+            </section>
+          </div>
+        </section>
+      </main>
+    )
+  }
+
   if (view === 'launcher') {
     return (
       <main className="layout">
@@ -2410,6 +2777,33 @@ function App() {
                   <p className="lead">Choose an app below to open it when ready.</p>
                 </div>
               </header>
+
+              {dashboardStats && (
+                <section className="dashboard-stats" aria-label="Dashboard overview">
+                  <div className="dash-stat-card" role="button" tabIndex={0} onClick={() => setView('wallet')} onKeyDown={(e) => e.key === 'Enter' && setView('wallet')} style={{ cursor: 'pointer' }}>
+                    <p className="dash-stat-label">Token Balance</p>
+                    <p className="dash-stat-value">⬡ {dashboardStats.tokenBalance.toFixed(2)}</p>
+                  </div>
+                  <div className="dash-stat-card" role="button" tabIndex={0} onClick={() => setView('devices')} onKeyDown={(e) => e.key === 'Enter' && setView('devices')} style={{ cursor: 'pointer' }}>
+                    <p className="dash-stat-label">Devices Online</p>
+                    <p className="dash-stat-value">{dashboardStats.onlineDevices} <span className="dash-stat-sub">/ {dashboardStats.totalDevices}</span></p>
+                  </div>
+                  <div className="dash-stat-card" role="button" tabIndex={0} onClick={() => setView('storage')} onKeyDown={(e) => e.key === 'Enter' && setView('storage')} style={{ cursor: 'pointer' }}>
+                    <p className="dash-stat-label">Storage Pooled</p>
+                    <p className="dash-stat-value">{dashboardStats.totalStorageGb.toFixed(0)} <span className="dash-stat-sub">GB</span></p>
+                  </div>
+                  <div className="dash-stat-card" role="button" tabIndex={0} onClick={() => setView('drive')} onKeyDown={(e) => e.key === 'Enter' && setView('drive')} style={{ cursor: 'pointer' }}>
+                    <p className="dash-stat-label">Drive Files</p>
+                    <p className="dash-stat-value">{dashboardStats.fileCount}</p>
+                  </div>
+                  {dashboardStats.unreadNotifications > 0 && (
+                    <div className="dash-stat-card dash-stat-alert" role="button" tabIndex={0} onClick={() => setNotifPanelOpen(true)} onKeyDown={(e) => e.key === 'Enter' && setNotifPanelOpen(true)} style={{ cursor: 'pointer' }}>
+                      <p className="dash-stat-label">Notifications</p>
+                      <p className="dash-stat-value">{dashboardStats.unreadNotifications} <span className="dash-stat-sub">unread</span></p>
+                    </div>
+                  )}
+                </section>
+              )}
 
               <section className="app-grid" aria-label="Available Zenith apps">
                 {appTiles.map((app) => (
@@ -2468,6 +2862,17 @@ function App() {
 
                       if (app.id === 'desktop') {
                         handleOpenDesktopView()
+                        return
+                      }
+
+                      if (app.id === 'settings') {
+                        setSettingsName(accountName)
+                        setSettingsEmail(accountEmail)
+                        setSettingsCurrentPw('')
+                        setSettingsNewPw('')
+                        setSettingsMsg('')
+                        setStatus('')
+                        setView('settings')
                         return
                       }
 

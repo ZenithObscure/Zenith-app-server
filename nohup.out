@@ -13,3 +13,28 @@ dist/index.html                   0.40 kB │ gzip:  0.27 kB
 dist/assets/index-kRqsbJWS.css   26.55 kB │ gzip:  5.53 kB
 dist/assets/index-CmS03vxh.js   245.24 kB │ gzip: 74.03 kB
 ✓ built in 3.24s
+From https://github.com/ZenithObscure/Zenith-app-server
+   c839591..5a1d597  main       -> origin/main
+Updating c839591..5a1d597
+Fast-forward
+ .gitignore     |   1 +
+ nohup.out      |  15 +++++
+ src/App.tsx    | 203 +++++++++++++++++++++++++++++++++++++++++++++++++++------
+ src/styles.css | 153 +++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 352 insertions(+), 20 deletions(-)
+ create mode 100644 nohup.out
+
+> zenith-app@0.1.0 build
+> tsc -b && vite build
+
+NODE_ENV=production is not supported in the .env file. Only NODE_ENV=development is supported to create a development build of your project. If you need to set process.env.NODE_ENV, you can set it in the Vite config instead.
+vite v7.3.1 building client environment for production...
+transforming...
+✓ 29 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.40 kB │ gzip:  0.27 kB
+dist/assets/index-yU8hcYbK.css   28.60 kB │ gzip:  5.88 kB
+dist/assets/index-BpJrhfOJ.js   250.02 kB │ gzip: 75.57 kB
+✓ built in 3.88s
+active

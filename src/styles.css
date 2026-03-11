@@ -2053,3 +2053,360 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Notifications Bell ──────────────────────────────────────────────────────── */
+.sidebar-toprow-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.notif-bell-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted-ink);
+  transition: all 0.18s ease;
+  flex-shrink: 0;
+}
+
+.notif-bell-btn:hover {
+  background: rgba(232, 121, 249, 0.1);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.notif-bell-icon {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.notif-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 700;
+  border-radius: 999px;
+  min-width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  line-height: 1;
+}
+
+/* ── Notifications Panel ─────────────────────────────────────────────────────── */
+.notif-panel {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  z-index: 300;
+  width: 320px;
+  margin-left: 8px;
+  background: #12091f;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+  overflow: hidden;
+}
+
+.notif-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.notif-panel-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.notif-panel-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.notif-empty {
+  padding: 1.25rem 1rem;
+  color: var(--muted-ink);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.notif-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.notif-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.65rem 1rem;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s ease;
+}
+
+.notif-item:last-child {
+  border-bottom: none;
+}
+
+.notif-item:not(.read) {
+  background: rgba(217, 70, 239, 0.05);
+}
+
+.notif-item:not(.read)::before {
+  content: '';
+  display: block;
+  width: 6px;
+  height: 6px;
+  min-width: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-top: 5px;
+}
+
+.notif-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.notif-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notif-body {
+  font-size: 0.77rem;
+  color: var(--muted-ink);
+}
+
+.notif-time {
+  font-size: 0.72rem;
+  color: rgba(196, 181, 253, 0.5);
+}
+
+.notif-dismiss {
+  background: transparent;
+  border: none;
+  color: rgba(196, 181, 253, 0.5);
+  font-size: 0.7rem;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  transition: color 0.15s ease;
+}
+
+.notif-dismiss:hover {
+  color: var(--danger);
+}
+
+/* ── Dashboard Stats ─────────────────────────────────────────────────────────── */
+.dashboard-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.75rem;
+}
+
+.dash-stat-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.dash-stat-card:is([role="button"]):hover {
+  border-color: rgba(217, 70, 239, 0.5);
+  background: rgba(217, 70, 239, 0.05);
+}
+
+.dash-stat-card.dash-stat-alert {
+  border-color: rgba(244, 63, 94, 0.35);
+  background: rgba(244, 63, 94, 0.04);
+}
+
+.dash-stat-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted-ink);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 0.3rem;
+}
+
+.dash-stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.dash-stat-sub {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--muted-ink);
+}
+
+/* ── Settings View ───────────────────────────────────────────────────────────── */
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  max-width: 520px;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.settings-section-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-ink);
+  margin: 0;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.settings-field label {
+  font-size: 0.82rem;
+  color: var(--muted-ink);
+  font-weight: 600;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+/* ── Drive Image Preview Modal ───────────────────────────────────────────────── */
+.drive-preview-modal {
+  background: #12091f;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 720px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.75);
+}
+
+.drive-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.drive-preview-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drive-preview-body {
+  padding: 1.25rem;
+  overflow: auto;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.3);
+}
+
+/* ── Fidus Memory Panel ──────────────────────────────────────────────────────── */
+.fidus-memory-panel {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.fidus-memory-input-row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.fidus-memory-input-row input {
+  flex: 1;
+  font-size: 0.78rem;
+  padding: 0.35rem 0.6rem;
+}
+
+.fidus-memory-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.fidus-memory-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.55rem;
+}
+
+.fidus-memory-text {
+  flex: 1;
+  font-size: 0.78rem;
+  color: var(--muted-ink);
+  line-height: 1.4;
+  word-break: break-word;
+}
