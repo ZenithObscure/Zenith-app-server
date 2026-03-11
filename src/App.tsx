@@ -2200,7 +2200,7 @@ function App() {
                 </div>
                 <div className="drive-preview-body">
                   <img
-                    src={`${API_BASE}/api/drive/${drivePreviewNode.id}/content`}
+                    src={`${API_BASE}/api/drive/${drivePreviewNode.id}/content${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`}
                     alt={drivePreviewNode.name}
                     className="drive-preview-img"
                     style={{ display: 'block', maxWidth: '100%', maxHeight: '65vh', margin: '0 auto', borderRadius: '8px' }}
@@ -2401,18 +2401,9 @@ function App() {
   }
 
   if (view === 'photo-album') {
-    const mockPhotos = [
-      { id: 'mp-1', name: 'Mountain Sunrise', date: 'Jan 12, 2026', tag: 'Nature', grad: 'linear-gradient(135deg,#7c3aed,#db2777)' },
-      { id: 'mp-2', name: 'Dev Setup', date: 'Feb 3, 2026', tag: 'Workspace', grad: 'linear-gradient(135deg,#0e7490,#7c3aed)' },
-      { id: 'mp-3', name: 'Night City', date: 'Feb 14, 2026', tag: 'Urban', grad: 'linear-gradient(135deg,#064e3b,#0e7490)' },
-      { id: 'mp-4', name: 'Project Wireframes', date: 'Mar 1, 2026', tag: 'Work', grad: 'linear-gradient(135deg,#9d174d,#7c3aed)' },
-      { id: 'mp-5', name: 'Team Call', date: 'Mar 5, 2026', tag: 'People', grad: 'linear-gradient(135deg,#1e3a5f,#9d174d)' },
-      { id: 'mp-6', name: 'Blueprint v2', date: 'Mar 8, 2026', tag: 'Work', grad: 'linear-gradient(135deg,#4c1d95,#1e40af)' },
-      { id: 'mp-7', name: 'Coastal Path', date: 'Mar 9, 2026', tag: 'Nature', grad: 'linear-gradient(135deg,#065f46,#0369a1)' },
-      { id: 'mp-8', name: 'Late Night Render', date: 'Mar 10, 2026', tag: 'Work', grad: 'linear-gradient(135deg,#3b0764,#db2777)' },
-    ]
-
-    const selectedMock = mockPhotos.find((p) => p.id === selectedMockPhotoId) ?? null
+    const albumPhotos = driveNodes.filter((n) => n.kind === 'file' && n.isImage)
+    const selectedPhoto = albumPhotos.find((p) => p.id === selectedMockPhotoId) ?? null
+    const photoUrl = (id: string) => `${API_BASE}/api/drive/${id}/content${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`
 
     return (
       <main className="layout">
@@ -2425,46 +2416,69 @@ function App() {
                 <div>
                   <p className="kicker">Photo Album</p>
                   <h1>Photos</h1>
-                  <p className="lead">{mockPhotos.length} photos &mdash; mock library preview.</p>
+                  <p className="lead">
+                    {albumPhotos.length > 0
+                      ? `${albumPhotos.length} image${albumPhotos.length !== 1 ? 's' : ''} from Drive`
+                      : 'No images yet — upload image files to Drive to see them here.'}
+                  </p>
                 </div>
               </header>
 
-              <section className="album-photo-grid" aria-label="Photo library">
-                {mockPhotos.map((photo) => (
-                  <button
-                    key={photo.id}
-                    type="button"
-                    className={
-                      photo.id === selectedMockPhotoId ? 'album-photo-card active' : 'album-photo-card'
-                    }
-                    onClick={() =>
-                      setSelectedMockPhotoId(photo.id === selectedMockPhotoId ? null : photo.id)
-                    }
-                  >
-                    <div className="album-photo-thumb" style={{ background: photo.grad }}>
-                      <span className="album-photo-tag">{photo.tag}</span>
-                    </div>
-                    <div className="album-photo-meta">
-                      <span className="album-photo-name">{photo.name}</span>
-                      <span className="album-photo-date">{photo.date}</span>
-                    </div>
-                  </button>
-                ))}
-              </section>
+              {albumPhotos.length === 0 ? (
+                <p className="device-caption" style={{ padding: '1.5rem 0' }}>
+                  Upload .jpg, .png, .gif, or .webp files to your Drive and they will appear here automatically.
+                </p>
+              ) : (
+                <section className="album-photo-grid" aria-label="Photo library">
+                  {albumPhotos.map((photo) => (
+                    <button
+                      key={photo.id}
+                      type="button"
+                      className={
+                        photo.id === selectedMockPhotoId ? 'album-photo-card active' : 'album-photo-card'
+                      }
+                      onClick={() =>
+                        setSelectedMockPhotoId(photo.id === selectedMockPhotoId ? null : photo.id)
+                      }
+                    >
+                      <div className="album-photo-thumb">
+                        <img
+                          src={photoUrl(photo.id)}
+                          alt={photo.name}
+                          className="album-thumb-img"
+                          loading="lazy"
+                        />
+                      </div>
+                      <div className="album-photo-meta">
+                        <span className="album-photo-name">{photo.name}</span>
+                        {photo.sizeBytes != null && (
+                          <span className="album-photo-date">{(photo.sizeBytes / 1024).toFixed(0)} KB</span>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </section>
+              )}
 
-              {selectedMock && (
+              {selectedPhoto && (
                 <section className="album-full-preview">
-                  <div
-                    className="album-full-thumb"
-                    style={{ background: selectedMock.grad }}
-                    aria-label={selectedMock.name}
-                  >
-                    <span className="album-full-label">{selectedMock.name}</span>
-                  </div>
+                  <img
+                    src={photoUrl(selectedPhoto.id)}
+                    alt={selectedPhoto.name}
+                    className="album-full-img"
+                  />
                   <div className="album-full-info">
-                    <p className="album-full-name">{selectedMock.name}</p>
-                    <p className="album-full-date">{selectedMock.date} &middot; {selectedMock.tag}</p>
-                    <p className="device-caption">Full-resolution image loading will be available when photos are synced from Drive.</p>
+                    <p className="album-full-name">{selectedPhoto.name}</p>
+                    {selectedPhoto.sizeBytes != null && (
+                      <p className="album-full-date">{(selectedPhoto.sizeBytes / 1024 / 1024).toFixed(2)} MB</p>
+                    )}
+                    <button
+                      className="mini-button"
+                      type="button"
+                      onClick={() => setDrivePreviewNode(selectedPhoto)}
+                    >
+                      Open full preview
+                    </button>
                   </div>
                 </section>
               )}

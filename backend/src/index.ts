@@ -911,7 +911,21 @@ app.post('/api/drive/upload', requireAuth, upload.array('files', 20), (req: Auth
   res.status(201).json({ nodes })
 })
 
-app.get('/api/drive/:id/content', requireAuth, (req: AuthRequest, res) => {
+app.get('/api/drive/:id/content', (req: AuthRequest, res, next) => {
+  // Accept token from Authorization header OR ?token= query param (for <img src> use)
+  const qToken = typeof req.query.token === 'string' ? req.query.token : null
+  if (qToken) {
+    try {
+      const decoded = jwt.verify(qToken, jwtSecret) as AuthTokenPayload
+      req.userId = decoded.sub
+      req.userRole = decoded.role ?? 'user'
+      return next()
+    } catch {
+      res.status(401).json({ error: 'Invalid or expired token' }); return
+    }
+  }
+  return requireAuth(req, res, next)
+}, (req: AuthRequest, res) => {
   const userId = req.userId!
   const row = db.prepare(
     'SELECT name, mime_type, storage_path FROM drive_nodes WHERE id = ? AND user_id = ? AND kind = \'file\'',

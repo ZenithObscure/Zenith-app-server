@@ -1336,6 +1336,22 @@ body {
   align-items: flex-start;
   justify-content: flex-end;
   padding: 0.45rem;
+  overflow: hidden;
+  background: rgba(10, 5, 20, 0.5);
+}
+
+.album-thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px 8px 0 0;
+}
+
+/* make the thumb a positioning context for the absolute img */
+.album-photo-thumb {
+  position: relative;
 }
 
 .album-photo-tag {
@@ -1382,11 +1398,11 @@ body {
   gap: 0;
 }
 
-.album-full-thumb {
-  min-height: 220px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.album-full-img {
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  display: block;
 }
 
 .album-full-label {
