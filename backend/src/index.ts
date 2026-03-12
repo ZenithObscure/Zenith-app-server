@@ -99,8 +99,17 @@ const db = new Database(dbPath)
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
 
+// Trust nginx / Cloudflare reverse proxy so req.protocol and req.ip are correct
+app.set('trust proxy', 1)
+
 // Security middleware
-app.use(helmet())
+app.use(helmet({
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true,
+  },
+}))
 app.use(
   cors({
     origin: allowedOrigins,
