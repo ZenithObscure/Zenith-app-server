@@ -157,6 +157,11 @@ function createTray(): void {
 // ─── Auto updater ─────────────────────────────────────────────────────────────
 
 function setupAutoUpdater(): void {
+  const currentVersion = app.getVersion()
+  const isPrereleaseBuild = currentVersion.includes('-')
+
+  // Allow prerelease feeds only for prerelease builds (e.g. 0.4.0-beta.1).
+  autoUpdater.allowPrerelease = isPrereleaseBuild
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
 
