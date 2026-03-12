@@ -1539,20 +1539,6 @@ app.post('/api/fidus/chat', requireAuth, async (req: AuthRequest, res) => {
     res.end()
   }
 
-  // Load user memories to inject into the system prompt
-  const memories = db.prepare(
-    'SELECT content FROM fidus_memories WHERE user_id = ? ORDER BY created_at DESC LIMIT 20',
-  ).all(userId) as Array<{ content: string }>
-  const memoryBlock = memories.length > 0
-    ? '\n\nThings to always remember about this user:\n' + memories.map((m) => `- ${m.content}`).join('\n')
-    : ''
-
-  const systemPrompt =
-    'You are Fidus, a helpful AI assistant built into the Zenith desktop platform. ' +
-    'You are concise, technically sharp, and friendly. ' +
-    'Help the user with their Zenith workspace, code, planning, and any other questions.' +
-    memoryBlock
-
   // Stream local fallback response word by word
   const userText = messages.at(-1)?.text ?? ''
   const fallback = buildFallbackResponse(userText)

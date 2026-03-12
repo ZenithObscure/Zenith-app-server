@@ -432,7 +432,6 @@ function App() {
     })
 
     return cleanupProgress
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Electron device heartbeat — register once then ping every 30 s with live stats
